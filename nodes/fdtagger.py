@@ -7,7 +7,7 @@ from aiohttp import web
 from typing import List, Optional, Union, Tuple, Dict, Any
 
 import comfy.utils
-import comfy.model_manager
+import comfy.model_management
 from ..redrocket.image_manager import JtpImageManager
 from server import PromptServer
 
@@ -136,7 +136,7 @@ class FDTagger():
         scores: List[Dict[str, float]] = []
         for i in range(tensor.shape[0]):
             img: Image.Image = Image.fromarray(tensor[i]).convert("RGBA")
-            tags_t, scores_t = ComfyThreading().wait_for_async(lambda: classify_tags(image=img, model_name=model_name, tags_name=tags_name, device=comfy.model_manager.get_text_encoder_device(), threshold=threshold,
+            tags_t, scores_t = ComfyThreading().wait_for_async(lambda: classify_tags(image=img, model_name=model_name, tags_name=tags_name, device=comfy.model_management.get_text_encoder_device(), threshold=threshold,
                         exclude_tags=exclude_tags, replace_underscore=replace_underscore, trailing_comma=trailing_comma))
             tags.append(tags_t)
             scores.append(scores_t)
@@ -145,7 +145,7 @@ class FDTagger():
 
 JtpModelManager(model_basepath, download_progress_callback=download_progress_callback, download_complete_callback=download_complete_callback)
 JtpTagManager(tags_basepath, download_progress_callback=download_progress_callback, download_complete_callback=download_complete_callback)
-JtpInference(device=comfy.model_manager.get_text_encoder_device())
+JtpInference(device=comfy.model_management.get_text_encoder_device())
 
 NODE_CLASS_MAPPINGS: Dict[str, Any] = {
     "FDTagger|furrydiffusion": FDTagger,
