@@ -19,8 +19,9 @@ from ..helpers.config import ComfyExtensionConfig
 from ..helpers.multithreading import ComfyThreading
 import folder_paths
 
-model_basepath = folder_paths.add_model_folder_path("RedRocket", os.path.join(folder_paths.models_dir, "RedRocket"), is_default=True)
+model_basepath = os.path.join(folder_paths.models_dir, "RedRocket")
 tags_basepath = os.path.join(model_basepath, "tags")
+
 class ModelDevice(Enum):
     CPU = "cpu"
     GPU = "cuda"
@@ -136,16 +137,16 @@ class FDTagger():
         scores: List[Dict[str, float]] = []
         for i in range(tensor.shape[0]):
             img: Image.Image = Image.fromarray(tensor[i]).convert("RGBA")
-            tags_t, scores_t = ComfyThreading().wait_for_async(lambda: classify_tags(image=img, model_name=model_name, tags_name=tags_name, device=comfy.model_management.get_text_encoder_device(), threshold=threshold,
+            tags_t, scores_t = ComfyThreading().wait_for_async(lambda: classify_tags(image=img, model_name=model_name, tags_name=tags_name, device=comfy.model_management.get_torch_device(), threshold=threshold,
                         exclude_tags=exclude_tags, replace_underscore=replace_underscore, trailing_comma=trailing_comma))
             tags.append(tags_t)
             scores.append(scores_t)
             pbar.update(1)
         return {"ui": {"tags": tags, "scores": scores}, "result": (tags, scores,)}
 
-JtpModelManager(model_basepath, download_progress_callback=download_progress_callback, download_complete_callback=download_complete_callback)
-JtpTagManager(tags_basepath, download_progress_callback=download_progress_callback, download_complete_callback=download_complete_callback)
-JtpInference(device=comfy.model_management.get_text_encoder_device())
+JtpModelManager(model_basepath=model_basepath, download_progress_callback=download_progress_callback, download_complete_callback=download_complete_callback)
+JtpTagManager(tags_basepath=tags_basepath, download_progress_callback=download_progress_callback, download_complete_callback=download_complete_callback)
+JtpInference(device=comfy.model_management.get_torch_device())
 
 NODE_CLASS_MAPPINGS: Dict[str, Any] = {
     "FDTagger|furrydiffusion": FDTagger,
