@@ -7,7 +7,7 @@ from aiohttp import web
 from typing import List, Optional, Union, Tuple, Dict, Any
 
 import comfy.utils
-from ..helpers.cache import CacheCleanupMethod
+import comfy.model_manager
 from ..redrocket.image_manager import JtpImageManager
 from server import PromptServer
 
@@ -17,8 +17,10 @@ from ..redrocket.classifier import JtpInference
 from ..helpers.extension import ComfyExtension
 from ..helpers.config import ComfyExtensionConfig
 from ..helpers.multithreading import ComfyThreading
+import folder_paths
 
-    
+model_basepath = folder_paths.add_model_folder_path("RedRocket", os.path.join(folder_paths.models_dir, "RedRocket"), is_default=True)
+tags_basepath = os.path.join(model_basepath, "tags")
 class ModelDevice(Enum):
     CPU = "cpu"
     GPU = "cuda"
@@ -134,17 +136,16 @@ class FDTagger():
         scores: List[Dict[str, float]] = []
         for i in range(tensor.shape[0]):
             img: Image.Image = Image.fromarray(tensor[i]).convert("RGBA")
-            tags_t, scores_t = ComfyThreading().wait_for_async(lambda: classify_tags(image=img, model_name=model_name, tags_name=tags_name, device=device_type.to_torch_device(), threshold=threshold,
+            tags_t, scores_t = ComfyThreading().wait_for_async(lambda: classify_tags(image=img, model_name=model_name, tags_name=tags_name, device=comfy.model_manager.get_text_encoder_device(), threshold=threshold,
                         exclude_tags=exclude_tags, replace_underscore=replace_underscore, trailing_comma=trailing_comma))
             tags.append(tags_t)
             scores.append(scores_t)
             pbar.update(1)
         return {"ui": {"tags": tags, "scores": scores}, "result": (tags, scores,)}
 
-JtpModelManager(model_basepath=ComfyExtension().extension_dir("models", mkdir=True), download_progress_callback=download_progress_callback, download_complete_callback=download_complete_callback)
-JtpTagManager(tags_basepath=ComfyExtension().extension_dir("tags", mkdir=True), download_progress_callback=download_progress_callback, download_complete_callback=download_complete_callback)
-JtpImageManager(cache_maxsize=ComfyExtensionConfig().get(property="image_cache_maxsize"), cache_method=CacheCleanupMethod(ComfyExtensionConfig().get(property="image_cache_method")))
-JtpInference(device=ComfyExtensionConfig().get(property="device"))
+JtpModelManager(model_basepath, download_progress_callback=download_progress_callback, download_complete_callback=download_complete_callback)
+JtpTagManager(tags_basepath, download_progress_callback=download_progress_callback, download_complete_callback=download_complete_callback)
+JtpInference(device=comfy.model_manager.get_text_encoder_device())
 
 NODE_CLASS_MAPPINGS: Dict[str, Any] = {
     "FDTagger|furrydiffusion": FDTagger,
