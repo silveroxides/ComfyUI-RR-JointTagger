@@ -1,0 +1,42 @@
+{
+	"name": "furrydiffusion.FDTagger",
+	"logging": true,
+	"loglevel": "debug",
+	"huggingface_endpoint": "https://huggingface.co",
+	"api_endpoint": "furrydiffusion",
+	"image_cache_maxsize": 1,
+	"image_cache_method": "round_robin",
+	"fdtagger_settings": {
+		"model": "RedRocket PILOT v1",
+		"steps": 255,
+		"threshold": 0.35,
+		"exclude_tags": "",
+		"replace_underscore": true,
+		"trailing_comma": true,
+		"device": "cuda"
+	},
+	"models": {
+		"JTP_PILOT-e4-vit_so400m_patch14_siglip_384": {
+			"name": "RedRocket PILOT v1",
+			"url": "{HF_ENDPOINT}/RedRocket/JointTaggerProject/resolve/main/JTP_PILOT",
+			"version": "1"
+		},
+		"JTP_PILOT2-e3-vit_so400m_patch14_siglip_384": {
+			"name": "RedRocket PILOT v2",
+			"url": "{HF_ENDPOINT}/RedRocket/JointTaggerProject/resolve/main/JTP_PILOT2",
+			"version": "2"
+		}
+	},
+	"tags": {
+		"JTP_PILOT-e4-vit_so400m_patch14_siglip_384": {
+			"name": "RedRocket PILOT v1",
+			"url": "{HF_ENDPOINT}/RedRocket/JointTaggerProject/resolve/main/JTP_PILOT",
+			"version": "1"
+		},
+		"JTP_PILOT2-e3-vit_so400m_patch14_siglip_384": {
+			"name": "RedRocket PILOT v2",
+			"url": "{HF_ENDPOINT}/RedRocket/JointTaggerProject/resolve/main/JTP_PILOT2",
+			"version": "2"
+		}
+	}
+}

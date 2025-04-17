@@ -1,0 +1,10 @@
+pillow
+requests
+aiohttp
+torch
+torchvision
+numpy
+numpy
+tqdm
+msgspec
+colorama
