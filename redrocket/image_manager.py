@@ -94,7 +94,7 @@ class CompositeAlpha(torch.nn.Module):
 
 class JtpImageManager(metaclass=Singleton):
     def __init__(self, cache_maxsize: int = 1, cache_method: CacheCleanupMethod = CacheCleanupMethod.ROUND_ROBIN) -> None:
-        ComfyCache.set_max_size('image', cache_maxsize)
+        ComfyCache.set_max_size('image', 0)
         ComfyCache.set_cachemethod('image', CacheCleanupMethod[cache_method.name])
   
     def __del__(self) -> None:

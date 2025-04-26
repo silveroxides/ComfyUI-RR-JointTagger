@@ -10,6 +10,7 @@ import comfy.utils
 import comfy.model_management
 from ..redrocket.image_manager import JtpImageManager
 from server import PromptServer
+from comfy.comfy_types import IO, ComfyNodeABC, InputTypeDict, FileLocator
 
 from ..redrocket.tag_manager import JtpTagManager
 from ..redrocket.model_manager import JtpModelManager
@@ -29,7 +30,7 @@ class ModelDevice(Enum):
     def to_torch_device(self) -> torch.device:
         return torch.device(self.value)
 
-async def classify_tags(image: Image.Image, model_name: str, tags_name: str, device: torch.device, steps: float = 0.35, threshold: float = 0.35, exclude_tags: str = "", replace_underscore: bool = True, trailing_comma: bool = False) -> Tuple[str, Dict[str, float]]:
+async def classify_tags(image: Image.Image, model_name: str, tags_name: str, device: comfy.model_management.get_torch_device(), steps: float = 0.35, threshold: float = 0.35, exclude_tags: str = "", replace_underscore: bool = True, trailing_comma: bool = False) -> Tuple[str, Dict[str, float]]:
     """
     Classify e621 tags for an image using RedRocket JTP Vision Transformer model
     """
@@ -103,33 +104,31 @@ async def get_tags(request: web.Request) -> web.Response:
     return web.json_response(await classify_tags(image=image, model_name=model, steps=steps, threshold=threshold, exclude_tags=exclude_tags, replace_underscore=replace_underscore, trailing_comma=trailing_comma, client_id=client_id, node=node))
 
 
-class FDTagger():
+class FDTagger(ComfyNodeABC):
     @classmethod
     def INPUT_TYPES(cls) -> Dict[str, Any]:
         models: List[str] =  [v["name"] for k, v in ComfyExtensionConfig().get(property="models").items()]
-        device: List[str] = ["cpu", "cuda"]
         return {"required": {
-            "image": ("IMAGE", ),
-            "device": (device, {"default": ComfyExtensionConfig().get(property="fdtagger_settings.device")}),
+            "image": (IO.IMAGE, ),
             "model": (models, {"default": ComfyExtensionConfig().get(property="fdtagger_settings.model")}),
-            "steps": ("INT", {"default": ComfyExtensionConfig().get(property="fdtagger_settings.steps"), "min": 1, "max": 500, "display": "slider"}),
-            "threshold": ("FLOAT", {"default": ComfyExtensionConfig().get(property="fdtagger_settings.threshold"), "min": 0.0, "max": 1.0, "step": 0.05, "display": "slider"}),
-            "replace_underscore": ("BOOLEAN", {"default": ComfyExtensionConfig().get(property="fdtagger_settings.replace_underscore")}),
-            "trailing_comma": ("BOOLEAN", {"default": ComfyExtensionConfig().get(property="fdtagger_settings.trailing_comma")}),
-            "exclude_tags": ("STRING", {"default": ComfyExtensionConfig().get(property="fdtagger_settings.exclude_tags"), "multiline": True}),
+            "steps": (IO.INT, {"default": 255, "min": 1, "max": 500, "display": "slider"}),
+            "threshold": (IO.FLOAT, {"default": 0.35, "min": 0.0, "max": 1.0, "step": 0.05, "display": "slider"}),
+            "replace_underscore": (IO.BOOLEAN, {"default": False}),
+            "trailing_comma": (IO.BOOLEAN, {"default": False}),
+            "exclude_tags": (IO.STRING, {"multiline": True, "tooltip": "Tags to exclude from output."}),
         }}
 
-    RETURN_TYPES: Tuple[str] = ("STRING", "TAGSCORES",)
+    RETURN_TYPES: Tuple[str] = (IO.STRING, IO.STRING,)
     RETURN_NAMES: Tuple[str] = ("tags", "scores",)
     OUTPUT_IS_LIST: Tuple[bool] = (True, True,)
     FUNCTION: str = "tag"
     OUTPUT_NODE: bool = True
     CATEGORY: str = "🐺 Furry Diffusion"
 
-    def tag(self, image: Image.Image, device: str, model: str, steps: int, threshold: float, exclude_tags: str = "", replace_underscore: bool = False, trailing_comma: bool = False) -> Dict[str, Any]:
+    def tag(self, image: Image.Image, model: str, steps: int, threshold: float, exclude_tags: str = "", replace_underscore: bool = False, trailing_comma: bool = False) -> Dict[str, Any]:
         model_name = ComfyExtensionConfig().get_model_from_name(model)
         tags_name = ComfyExtensionConfig().get_tags_from_name(model)
-        device_type = ModelDevice(device)
+        device_type = comfy.model_management.get_torch_device()
         tensor: np.ndarray = image * 255
         tensor = np.array(tensor, dtype=np.uint8)
         pbar = comfy.utils.ProgressBar(tensor.shape[0])
@@ -142,6 +141,8 @@ class FDTagger():
             tags.append(tags_t)
             scores.append(scores_t)
             pbar.update(1)
+            remove = [s.strip() for s in exclude_tags.lower().split(",")]
+            tags = [tag for tag in tags if tag[0] not in remove]
         return {"ui": {"tags": tags, "scores": scores}, "result": (tags, scores,)}
 
 JtpModelManager(model_basepath=model_basepath, download_progress_callback=download_progress_callback, download_complete_callback=download_complete_callback)
