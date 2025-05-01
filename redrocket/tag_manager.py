@@ -137,6 +137,7 @@ class JtpTagManager(metaclass=Singleton):
         from ..helpers.logger import ComfyLogger
         await asyncio.sleep(0.1)
         corrected_excluded_tags = [tag.replace("_", " ").strip() for tag in exclude_tags.split(",") if not tag.isspace()]
+        print(corrected_excluded_tags)
         tag_score = {}
         if indices is None or indices.size(0) == 0:
             ComfyLogger().log(message=f"No indicies found for model {tags_name}", type="WARNING", always=True)
