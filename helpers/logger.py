@@ -1,25 +1,9 @@
 import logging
 from typing import Optional
-from colorama import init as colorama_init
-from colorama import Fore, Back, Style
 
 from .metaclasses import Singleton
 
 
-class CustomFormatter(logging.Formatter):
-    """
-    A custom formatter for logging messages.
-    """
-    def format(self, record: logging.LogRecord) -> str:
-        color = {
-            "DEBUG": Fore.CYAN,
-            "INFO": Fore.GREEN,
-            "WARNING": Fore.YELLOW,
-            "ERROR": Fore.RED,
-            "CRITICAL": Fore.RED + Style.BRIGHT
-        }
-        record.levelname = f"{color[record.levelname]}{record.levelname}{Style.RESET_ALL}"
-        return f"🐺 [{record.levelname}] {record.getMessage()}"
 
 class ComfyLogger(metaclass=Singleton):
     """
@@ -31,9 +15,7 @@ class ComfyLogger(metaclass=Singleton):
         self.logger = logging.getLogger(f"{name}")
         self.logger.setLevel(self.log_level())
         self.logger.addHandler(logging.StreamHandler())
-        self.logger.handlers[0].setFormatter(CustomFormatter())
         self.logger.propagate = False
-        colorama_init(autoreset=True, strip=False, convert=True, wrap=True)
     
     @classmethod
     def log(cls, message: str, type: Optional[str] = None, always: bool = False) -> None:

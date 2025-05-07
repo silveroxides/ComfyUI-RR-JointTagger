@@ -7,4 +7,3 @@ numpy
 numpy
 tqdm
 msgspec
-colorama

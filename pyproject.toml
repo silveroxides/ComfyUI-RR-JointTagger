@@ -3,7 +3,7 @@ name = "ComfyUI-RR-JointTagger"
 description = "Tagger used to tag image of but not limited to furry art."
 version = "0.1.0"
 license = "LICENSE"
-dependencies = ["torch", "torchvision", "pillow", "requests", "comfyui", "aiohttp", "numpy", "msgspec", "colorama"]
+dependencies = ["torch", "torchvision", "pillow", "requests", "comfyui", "aiohttp", "numpy", "msgspec"]
 
 [project.urls]
 Repository = "https://github.com/silveroxides/ComfyUI-RR-JointTagger"
