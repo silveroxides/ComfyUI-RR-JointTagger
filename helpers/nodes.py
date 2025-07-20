@@ -38,9 +38,9 @@ class ComfyNode(metaclass=Singleton):
         }, client_id)
 
     @classmethod
-    async def update_node_status_async(cls, client_id: Optional[str], node: Union[str, None], api_endpoint: Union[str, None], text: Optional[str] = None, progress: Optional[float] = None) -> None:
+    def update_node_status_async(cls, client_id: Optional[str], node: Union[str, None], api_endpoint: Union[str, None], text: Optional[str] = None, progress: Optional[float] = None) -> None:
         """
-		Update the status of a node in the Comfy UI asynchronously
+		Update the status of a node in the Comfy UI
         """
         from .extension import ComfyExtension
         from .config import ComfyExtensionConfig
@@ -52,7 +52,7 @@ class ComfyNode(metaclass=Singleton):
             api_endpoint = ComfyExtensionConfig().get(property="api_endpoint")
         if api_endpoint is None:
             raise ValueError("API endpoint is not set")
-        await PromptServer.instance.send(f"{api_endpoint}/update_status", {
+        PromptServer.instance.send(f"{api_endpoint}/update_status", {
             "node": node,
             "progress": progress,
             "text": text
