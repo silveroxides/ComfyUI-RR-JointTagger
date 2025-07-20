@@ -20,7 +20,7 @@ class JtpInference(metaclass=Singleton):
         self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     @classmethod
-    async def run_classifier(cls, model_name: str, tags_name: str, device: torch.device, image: Union[Image.Image, np.ndarray, Path], steps: float, threshold: float, exclude_tags: str = "", replace_underscore: bool = True, trailing_comma: bool = False) -> Tuple[str, Dict[str, float]]:
+    def run_classifier(cls, model_name: str, tags_name: str, device: torch.device, image: Union[Image.Image, np.ndarray, Path], steps: float, threshold: float, exclude_tags: str = "", replace_underscore: bool = True, trailing_comma: bool = False) -> Tuple[str, Dict[str, float]]:
         from ..helpers.logger import ComfyLogger
         
         model_version: int = ComfyCache.get(f'config.models.{model_name}.version')
@@ -29,11 +29,11 @@ class JtpInference(metaclass=Singleton):
 
         # Load all the things
         if JtpModelManager().is_installed(model_name) is False:
-            if not await JtpModelManager().download(model_name):
+            if not JtpModelManager().download(model_name):
                 ComfyLogger().log(f"Model {model_name} could not be downloaded", "ERROR", True)
                 return "", {}
         if JtpTagManager().is_installed(tags_name) is False:
-            if not await JtpTagManager().download(tags_name):
+            if not JtpTagManager().download(tags_name):
                 ComfyLogger().log(f"Tags {tags_name} could not be downloaded", "ERROR", True)
                 return "", {}            
         if JtpModelManager().is_loaded(model_name) is False:
@@ -47,7 +47,7 @@ class JtpInference(metaclass=Singleton):
         # if cls().device != device:
         #     JtpModelManager().switch_device(model_name, device)
         #     cls().device = device
-        tensor = await JtpImageManager().load(image=image, device=device)
+        tensor = JtpImageManager().load(image=image, device=device)
         if tensor is None:
             ComfyLogger().log(message="Image could not be loaded", type="ERROR", always=True)
             return "", {}
@@ -71,8 +71,8 @@ class JtpInference(metaclass=Singleton):
                 ComfyLogger().log(message=f"Model version {model_version} not supported", type="ERROR", always=True)
                 return "", {}
         ComfyLogger().log(message="Processing tags...", type="DEBUG", always=True)
-        tags_str, tag_scores = await JtpTagManager().process_tags(tags_name=tags_name, values=values, indices=indices, threshold=threshold, exclude_tags=exclude_tags, replace_underscore=replace_underscore, trailing_comma=trailing_comma)
-        if not await JtpImageManager().commit_cache(image=image, output=(tags_str, tag_scores)):
+        tags_str, tag_scores = JtpTagManager().process_tags(tags_name=tags_name, values=values, indices=indices, threshold=threshold, exclude_tags=exclude_tags, replace_underscore=replace_underscore, trailing_comma=trailing_comma)
+        if not JtpImageManager().commit_cache(image=image, output=(tags_str, tag_scores)):
             ComfyLogger().log(message="Image cache could not be committed", type="WARN", always=True)
             return tags_str, tag_scores
         ComfyLogger().log(message=f"Classification complete: {tags_str}", type="INFO", always=True)

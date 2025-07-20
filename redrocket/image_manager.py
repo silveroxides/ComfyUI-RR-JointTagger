@@ -130,7 +130,7 @@ class JtpImageManager(metaclass=Singleton):
         ])
   
     @classmethod
-    async def load(cls, image: Union[Path, numpy.ndarray, Image.Image, None], device: torch.device) -> Union[Tuple[str, Dict[str, Any]], torch.Tensor, None]:
+    def load(cls, image: Union[Path, numpy.ndarray, Image.Image, None], device: torch.device) -> Union[Tuple[str, Dict[str, Any]], torch.Tensor, None]:
         """
         Load an image into memory
   
@@ -249,7 +249,7 @@ class JtpImageManager(metaclass=Singleton):
         return False
 
     @classmethod
-    async def commit_cache(cls, image, output: Tuple[str, Dict[str, Any]]) -> bool:
+    def commit_cache(cls, image, output: Tuple[str, Dict[str, Any]]) -> bool:
         """
         Commit the output of an image to the cache
         """

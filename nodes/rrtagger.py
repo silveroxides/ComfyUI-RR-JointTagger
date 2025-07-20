@@ -17,7 +17,6 @@ from ..redrocket.model_manager import JtpModelManager
 from ..redrocket.classifier import JtpInference
 from ..helpers.extension import ComfyExtension
 from ..helpers.config import ComfyExtensionConfig
-from ..helpers.multithreading import ComfyThreading
 import folder_paths
 
 model_basepath = os.path.join(folder_paths.models_dir, "RedRocket")
@@ -30,15 +29,15 @@ class ModelDevice(Enum):
     def to_torch_device(self) -> torch.device:
         return torch.device(self.value)
 
-async def classify_tags(image: Image.Image, model_name: str, tags_name: str, device: comfy.model_management.get_torch_device(), steps: float = 0.35, threshold: float = 0.35, exclude_tags: str = "", replace_underscore: bool = True, trailing_comma: bool = False) -> Tuple[str, Dict[str, float]]:
+def classify_tags(image: Image.Image, model_name: str, tags_name: str, device: comfy.model_management.get_torch_device(), steps: float = 0.35, threshold: float = 0.35, exclude_tags: str = "", replace_underscore: bool = True, trailing_comma: bool = False) -> Tuple[str, Dict[str, float]]:
     """
     Classify e621 tags for an image using RedRocket JTP Vision Transformer model
     """
-    tag_string, tag_scores = await JtpInference().run_classifier(model_name=model_name, device=device, tags_name=tags_name, image=image, steps=steps, threshold=threshold, exclude_tags=exclude_tags, replace_underscore=replace_underscore, trailing_comma=trailing_comma)
+    tag_string, tag_scores = JtpInference().run_classifier(model_name=model_name, device=device, tags_name=tags_name, image=image, steps=steps, threshold=threshold, exclude_tags=exclude_tags, replace_underscore=replace_underscore, trailing_comma=trailing_comma)
     return tag_string, tag_scores
 
 
-async def download_progress_callback(perc: int, file_name: str, client_id: Optional[str] = None, node: Optional[str] = None, api_endpoint: Optional[str] = None) -> None:
+def download_progress_callback(perc: int, file_name: str, client_id: Optional[str] = None, node: Optional[str] = None, api_endpoint: Optional[str] = None) -> None:
     """
     Callback function for download progress updates
     """
@@ -57,7 +56,7 @@ async def download_progress_callback(perc: int, file_name: str, client_id: Optio
     ComfyNode().update_node_status(client_id=client_id, node=node, api_endpoint=api_endpoint, text=message, progress=perc)
 
 
-async def download_complete_callback(file_name: str, client_id: Optional[str] = None, node: Optional[str] = None, api_endpoint: Optional[str] = None) -> None:
+def download_complete_callback(file_name: str, client_id: Optional[str] = None, node: Optional[str] = None, api_endpoint: Optional[str] = None) -> None:
     """
     Callback function for download completion updates
     """
@@ -76,7 +75,7 @@ async def download_complete_callback(file_name: str, client_id: Optional[str] = 
 
 api_endpoint: str = ComfyExtensionConfig().get(property="api_endpoint")
 @PromptServer.instance.routes.get(f"/{api_endpoint}/rrtagger/tag")
-async def get_tags(request: web.Request) -> web.Response:
+def get_tags(request: web.Request) -> web.Response:
     if "filename" not in request.rel_url.query:
         return web.Response(status=404)
     type: str = request.query.get("type", "output")
@@ -101,7 +100,7 @@ async def get_tags(request: web.Request) -> web.Response:
     device: ModelDevice = ModelDevice(request.query.get("device", "cpu"))
     client_id: str = request.rel_url.query.get("clientId", None)
     node: str = request.rel_url.query.get("node", None)
-    return web.json_response(await classify_tags(image=image, model_name=model, steps=steps, threshold=threshold, exclude_tags=exclude_tags, replace_underscore=replace_underscore, trailing_comma=trailing_comma, client_id=client_id, node=node))
+    return web.json_response(classify_tags(image=image, model_name=model, steps=steps, threshold=threshold, exclude_tags=exclude_tags, replace_underscore=replace_underscore, trailing_comma=trailing_comma, client_id=client_id, node=node))
 
 def normalize_tag(tag: str) -> str:
   """
@@ -200,8 +199,8 @@ class RRJointTagger(ComfyNodeABC):
         scores: List[Dict[str, float]] = []
         for i in range(tensor.shape[0]):
             img: Image.Image = Image.fromarray(tensor[i]).convert("RGBA")
-            tags_t, scores_t = ComfyThreading().wait_for_async(lambda: classify_tags(image=img, model_name=model_name, tags_name=tags_name, device=comfy.model_management.get_torch_device(), threshold=threshold,
-                        exclude_tags=exclude_tags, replace_underscore=replace_underscore, trailing_comma=trailing_comma))
+            tags_t, scores_t = classify_tags(image=img, model_name=model_name, tags_name=tags_name, device=comfy.model_management.get_torch_device(), threshold=threshold,
+                        exclude_tags=exclude_tags, replace_underscore=replace_underscore, trailing_comma=trailing_comma)
             print(f"tags_t={tags_t}")
             final_tags = filter_tags(tags_t, exclude_tags)
             tags.append(final_tags)

@@ -1,4 +1,3 @@
-import asyncio
 import gc
 import os
 from typing import Callable, List, Optional, Union
@@ -150,7 +149,7 @@ class JtpModelManager(metaclass=Singleton):
         return models
     
     @classmethod
-    async def download(cls, model_name: str) -> bool:
+    def download(cls, model_name: str) -> bool:
         """
         Download a RedRocket JTP Vision Transformer model from a URL
         """
@@ -171,11 +170,11 @@ class JtpModelManager(metaclass=Singleton):
             url += f"{model_name}.safetensors"
         
         ComfyLogger().log(message=f"Downloading model {model_name} from {url}", type="INFO", always=True)
-        async with aiohttp.ClientSession(loop=asyncio.get_event_loop()) as session:
+        with aiohttp.ClientSession() as session:
             try:
-                await ComfyHTTP().download_to_file(url=url, destination=model_path, update_callback=cls().download_progress_callback, session=session)
+                ComfyHTTP().download_to_file(url=url, destination=model_path, update_callback=cls().download_progress_callback, session=session)
             except aiohttp.client_exceptions.ClientConnectorError as err:
                 ComfyLogger().log(message="Unable to download model. Download files manually or try using a HF mirror/proxy in your config.json", type="ERROR", always=True)
                 return False
-            await cls().download_complete_callback(model_name)
+            cls().download_complete_callback(model_name)
         return True
