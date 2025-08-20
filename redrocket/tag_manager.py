@@ -1,4 +1,3 @@
-import asyncio
 import gc
 import os
 from typing import Callable, Dict, List, Optional, Tuple, Union
@@ -99,7 +98,7 @@ class JtpTagManager(metaclass=Singleton):
         return tags
     
     @classmethod
-    async def download(cls, tags_name: str) -> bool:
+    def download(cls, tags_name: str) -> bool:
         """
         Load tags for a model from a URL and save them to a file.
         """
@@ -123,19 +122,18 @@ class JtpTagManager(metaclass=Singleton):
             url += f"tags.json"
         
         ComfyLogger().log(f"Downloading tags {tags_name} from {url}", "INFO", True)
-        async with aiohttp.ClientSession(loop=asyncio.get_event_loop()) as session:
+        with aiohttp.ClientSession() as session:
             try:
-                await ComfyHTTP().download_to_file(f"{url}", tags_path, cls().download_progress_callback, session=session)
+                ComfyHTTP().download_to_file(f"{url}", tags_path, cls().download_progress_callback, session=session)
             except aiohttp.client_exceptions.ClientConnectorError as err:
                 ComfyLogger().log("Unable to download tags. Download files manually or try using a HF mirror/proxy in your config.json", "ERROR", True)
                 return False
-            await cls().download_complete_callback(tags_name)
+            cls().download_complete_callback(tags_name)
         return True
 
     @classmethod
-    async def process_tags(cls, tags_name: str, indices: Union[torch.Tensor, None], values: Union[torch.Tensor, None], exclude_tags: str, replace_underscore: bool, threshold: float, trailing_comma: bool) -> Tuple[str, Dict[str, float]]:
+    def process_tags(cls, tags_name: str, indices: Union[torch.Tensor, None], values: Union[torch.Tensor, None], exclude_tags: str, replace_underscore: bool, threshold: float, trailing_comma: bool) -> Tuple[str, Dict[str, float]]:
         from ..helpers.logger import ComfyLogger
-        await asyncio.sleep(0.1)
         corrected_excluded_tags = [tag.replace("_", " ").strip() for tag in exclude_tags.split(",") if not tag.isspace()]
         print(corrected_excluded_tags)
         tag_score = {}
