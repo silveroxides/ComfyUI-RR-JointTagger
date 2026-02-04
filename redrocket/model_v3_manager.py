@@ -115,7 +115,7 @@ class JtpModelV3Manager(metaclass=Singleton):
             model.eval().to(dtype=torch.bfloat16)
             
             # Load state dict
-            msg = model.load_state_dict(state_dict, strict=False) 
+            msg = model.load_state_dict(state_dict, strict=True)
             
             # Move to device
             model.to(device=device)
