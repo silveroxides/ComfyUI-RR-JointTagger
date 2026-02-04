@@ -7,3 +7,5 @@ numpy
 numpy
 tqdm
 msgspec
+timm>=1.0.16
+einops

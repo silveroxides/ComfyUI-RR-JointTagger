@@ -38,5 +38,13 @@
 			"url": "{HF_ENDPOINT}/RedRocket/JointTaggerProject/resolve/main/JTP_PILOT2",
 			"version": "2"
 		}
+	},
+	"models_v3": {
+		"jtp-3-hydra": {
+			"name": "RedRocket JTP-3 Hydra",
+			"url": "{HF_ENDPOINT}/RedRocket/JTP-3/resolve/main/models/jtp-3-hydra.safetensors",
+			"data_url": "{HF_ENDPOINT}/RedRocket/JTP-3/resolve/main/data",
+			"version": "3"
+		}
 	}
 }
