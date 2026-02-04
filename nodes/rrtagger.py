@@ -179,6 +179,7 @@ class RRJointTagger(ComfyNodeABC):
             "replace_underscore": (IO.BOOLEAN, {"default": False}),
             "trailing_comma": (IO.BOOLEAN, {"default": False}),
             "exclude_tags": (IO.STRING, {"multiline": True, "tooltip": "Tags to exclude from output."}),
+            "seed": (IO.INT, {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
         }}
 
     RETURN_TYPES: Tuple[str] = (IO.STRING, IO.STRING,)
@@ -188,10 +189,14 @@ class RRJointTagger(ComfyNodeABC):
     OUTPUT_NODE: bool = True
     CATEGORY: str = "🐺 Furry Diffusion"
 
-    def tag(self, image: Image.Image, model: str, steps: int, threshold: float, exclude_tags: str = "", replace_underscore: bool = False, trailing_comma: bool = False) -> Dict[str, Any]:
+    def tag(self, image: Image.Image, model: str, steps: int, threshold: float, seed: int, exclude_tags: str = "", replace_underscore: bool = False, trailing_comma: bool = False) -> Dict[str, Any]:
         model_name = ComfyExtensionConfig().get_model_from_name(model)
         tags_name = ComfyExtensionConfig().get_tags_from_name(model)
         device_type = comfy.model_management.get_torch_device()
+        
+        # Set the seed for reproducibility if needed, though inference is deterministic
+        torch.manual_seed(seed)
+        
         tensor: np.ndarray = image * 255
         tensor = np.array(tensor, dtype=np.uint8)
         pbar = comfy.utils.ProgressBar(tensor.shape[0])
