@@ -7,6 +7,9 @@ import msgspec
 import torch
 
 from ..helpers.cache import CacheCleanupMethod, ComfyCache
+from ..helpers.http import ComfyHTTP
+from ..helpers.config import ComfyExtensionConfig
+from ..helpers.logger import ComfyLogger
 from ..helpers.metaclasses import Singleton
 
 
@@ -74,7 +77,7 @@ class JtpTagManager(metaclass=Singleton):
         ComfyCache.flush(f'tags.{tags_name}')
         gc.collect()
         return True
-
+    
     @classmethod
     def is_installed(cls, tags_name: str) -> bool:
         """
