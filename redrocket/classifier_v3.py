@@ -30,12 +30,14 @@ class JtpInferenceV3(metaclass=Singleton):
         cam_depth: int,
         seqlen: int,
         implications_mode: str,
-        exclude_categories: List[str],
-        seed: int
+        exclude_tags: str,
+        seed: int,
+        replace_underscore: bool = True,
+        trailing_comma: bool = False
     ) -> Tuple[str, Dict[str, float], Optional[Image.Image]]:
         
         # Hash params for caching
-        params_string = f"{model_name}|{threshold}|{cam_depth}|{seqlen}|{implications_mode}|{exclude_categories}|{seed}"
+        params_string = f"{model_name}|{threshold}|{cam_depth}|{seqlen}|{implications_mode}|{exclude_tags}|{seed}|{replace_underscore}|{trailing_comma}"
         params_key = hashlib.sha256(params_string.encode()).hexdigest()
         
         # Load Model
@@ -100,7 +102,8 @@ class JtpInferenceV3(metaclass=Singleton):
 
         # Process tags (Implications, Thresholding)
         tag_str, final_scores = JtpTagV3Manager.process_tags(
-            predictions, model_name, threshold, implications_mode, exclude_categories
+            predictions, model_name, threshold, implications_mode, exclude_tags,
+            replace_underscore=replace_underscore, trailing_comma=trailing_comma
         )
         
         cam_image = None
