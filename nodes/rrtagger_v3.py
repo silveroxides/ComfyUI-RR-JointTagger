@@ -32,11 +32,16 @@ class Jtp3HydraTagger(ComfyNodeABC):
             "image": (IO.IMAGE, ),
             "model": (models, {"default": models[0] if models else "jtp-3-hydra"}),
             "threshold": (IO.FLOAT, {"default": 0.5, "min": -1.0, "max": 1.0, "step": 0.05, "display": "slider"}),
-            "cam_depth": (IO.INT, {"default": 1, "min": 1, "max": 27, "step": 1, "display": "slider"}),
-            "seqlen": (IO.INT, {"default": 1024, "min": 64, "max": 2048, "step": 64}),
-            "implications_mode": (["inherit", "constrain", "remove", "constrain-remove", "off"], {"default": "inherit"}),
-            "exclude_tags": (IO.STRING, {"multiline": True, "tooltip": "Comma separated tags to exclude (e.g. humanoid, 1girl, etc)."}),
-            "seed": (IO.INT, {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+            "cam_depth": (IO.INT, {"default": 1, "min": 1, "max": 27, "step": 1, "display": "slider", "tooltip": "Depth of the Attention Map overlay. Higher values include more context but may be less precise."}),
+            "seqlen": (IO.INT, {"default": 1024, "min": 64, "max": 2048, "step": 64, "tooltip": "NaFlex sequence length. Determines internal resolution."}),
+            "implications_mode": (["inherit", "constrain", "remove", "constrain-remove", "off"], {"default": "inherit", "tooltip": "How to handle implied tags (e.g. if 'cat' is present, 'feline' is implied)."}),
+            "exclude_tags": (IO.STRING, {"multiline": True, "tooltip": "Comma separated tags to exclude (e.g. humanoid, 1girl)."}),
+            "exclude_categories": (IO.STRING, {"multiline": True, "tooltip": "Comma separated categories to exclude (e.g. artist, copyright, character, species, meta, lore)."}),
+            "prefix": (IO.STRING, {"default": "", "tooltip": "Text to prepend to the tags output."}),
+            "original_tags": (IO.BOOLEAN, {"default": False, "tooltip": "If True, output original e621 tags (e.g. 'vulva'). If False, rewrites them (e.g. 'pussy') compatible with some diffusion models."}),
+            "seed": (IO.INT, {"default": 0, "min": 0, "max": 0xffffffffffffffff, "tooltip": "Seed for deterministic execution (mainly for CAM)."}),
+            "cam_mode": (["auto", "none", "specific_tag"], {"default": "auto", "tooltip": "CAM visualization mode. 'auto' shows top tag."}),
+            "cam_tag": (IO.STRING, {"default": "", "tooltip": "Tag to visualize when cam_mode is 'specific_tag'."}),
             "replace_underscore": (IO.BOOLEAN, {"default": True, "tooltip": "Replace underscores with spaces in tags."}),
             "trailing_comma": (IO.BOOLEAN, {"default": False, "tooltip": "Add a trailing comma to the tag string."}),
         }}
@@ -57,6 +62,11 @@ class Jtp3HydraTagger(ComfyNodeABC):
             implications_mode: str,
             seed: int,
             exclude_tags: str = "",
+            exclude_categories: str = "",
+            prefix: str = "",
+            original_tags: bool = False,
+            cam_mode: str = "auto",
+            cam_tag: str = "",
             replace_underscore: bool = True,
             trailing_comma: bool = False) -> Dict[str, Any]:
         
@@ -83,9 +93,14 @@ class Jtp3HydraTagger(ComfyNodeABC):
                 seqlen=seqlen,
                 implications_mode=implications_mode,
                 exclude_tags=exclude_tags,
+                exclude_categories=exclude_categories,
+                prefix=prefix,
+                original_tags=original_tags,
                 seed=seed,
                 replace_underscore=replace_underscore,
-                trailing_comma=trailing_comma
+                trailing_comma=trailing_comma,
+                cam_mode=cam_mode,
+                cam_tag=cam_tag
             )
             
             tags_list.append(tags_str)
@@ -97,10 +112,8 @@ class Jtp3HydraTagger(ComfyNodeABC):
                 cam_tensor = torch.from_numpy(cam_np).unsqueeze(0) # BHWC
                 cams_list.append(cam_tensor)
             else:
-                # Empty black image if no CAM (shouldn't happen if logic allows, or just skip)
-                # If we return a list, lengths must match?
-                # Usually yes. Let's return a blank tensor of image size.
-                blank = torch.zeros((1, img.height, img.width, 3), dtype=torch.float32)
+                # Placeholder 64x64 black image if CAM is disabled/skipped
+                blank = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
                 cams_list.append(blank)
                 
             pbar.update(1)

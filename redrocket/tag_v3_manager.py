@@ -139,21 +139,25 @@ class JtpTagV3Manager(metaclass=Singleton):
                      threshold: float,
                      implications_mode: str = "inherit",
                      exclude_tags: str = "",
+                     exclude_categories: str = "",
+                     prefix: str = "",
+                     original_tags: bool = False,
                      replace_underscore: bool = True,
-                     trailing_comma: bool = False) -> Tuple[str, Dict[str, float]]:
+                     trailing_comma: bool = False) -> Tuple[str, Dict[str, float], Optional[str]]:
         
         metadata = ComfyCache.get(f'tags_v3.{model_name}')
         if not metadata:
             return "", {}
 
-        # Parse exclude tags (replace underscores with spaces for consistency if tags in metadata use spaces,
-        # or we normalize both side. JTP tags usually have underscores in CSV?)
-        # V2 logic: corrected_excluded_tags = [tag.replace("_", " ").strip() ...]
-        # Let's check metadata keys.
-        # process_tags in V2 checks: `if tag not in corrected_excluded_tags`
-        # and `tag` comes from `tags_data` keys.
-        
         corrected_excluded_tags = {tag.replace("_", " ").strip() for tag in exclude_tags.split(",") if tag.strip()}
+        
+        # Parse exclude categories
+        excluded_cats = set()
+        if exclude_categories:
+            for cat in exclude_categories.split(","):
+                cat = cat.strip()
+                if cat in TAG_CATEGORIES:
+                    excluded_cats.add(TAG_CATEGORIES[cat])
         
         labels = predictions.copy()
 
@@ -221,14 +225,39 @@ class JtpTagV3Manager(metaclass=Singleton):
         # Format output
         # Sort by score
         sorted_items = sorted(filtered_labels.items(), key=lambda x: x[1], reverse=True)
-        final_tags = {k: v for k, v in sorted_items}
         
-        tag_list = list(final_tags.keys())
-        if replace_underscore:
-            tag_list = [t.replace("_", " ") for t in tag_list]
+        top_tag_raw = sorted_items[0][0] if sorted_items else None
+        
+        final_tags = {}
+        tag_list = []
+        
+        for tag, score in sorted_items:
+            # Tag rewrite logic (JTP-3 inference.py)
+            if not original_tags:
+                tag = tag.replace("vulva", "pussy")
             
+            final_tags[tag] = score
+            
+            display_tag = tag
+            if replace_underscore:
+                display_tag = display_tag.replace("_", " ")
+                # JTP-3 inference.py also escapes parens if captioning, but ComfyUI usually handles strings raw.
+                # If we want to be safe for CLIPTextEncode, maybe? But users might not want backslashes.
+                # I'll stick to replace_underscore only as per V2.
+            
+            tag_list.append(display_tag)
+            
+        if prefix:
+            prefix_val = prefix.strip()
+            if prefix_val:
+                # Deduplicate prefix if it matches a tag?
+                # JTP-3: if prefix matches a tag, the tag will not be repeated.
+                if prefix_val in tag_list:
+                    tag_list.remove(prefix_val)
+                tag_list.insert(0, prefix_val)
+
         tag_string = ", ".join(tag_list)
         if trailing_comma and tag_string:
             tag_string += ","
 
-        return tag_string, final_tags
+        return tag_string, final_tags, top_tag_raw
