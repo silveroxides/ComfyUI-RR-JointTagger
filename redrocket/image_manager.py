@@ -110,11 +110,22 @@ class JtpImageManager(metaclass=Singleton):
         return ComfyCache.get(f'image.{image_name}') is not None and ComfyCache.get(f'image.{image_name}.input') is not None
 
     @classmethod
-    def is_done(cls, image_name: str) -> bool:
+    def is_done(cls, image_name: str, params_key: str = None) -> bool:
         """
         Check if an image is done processing
         """
-        return cls.is_cached(image_name) and ComfyCache.get(f'image.{image_name}.output') is not None
+        is_cached = cls.is_cached(image_name)
+        if not is_cached:
+            return False
+            
+        output = ComfyCache.get(f'image.{image_name}.output')
+        if output is None:
+            return False
+            
+        if params_key is not None:
+            return isinstance(output, dict) and params_key in output
+            
+        return True
     
     @classmethod
     def get_transform(cls, width: int, height: int, interpolation, grow, pad, background: Tuple[int, int, int]) -> transforms.Compose:
@@ -130,7 +141,7 @@ class JtpImageManager(metaclass=Singleton):
         ])
   
     @classmethod
-    def load(cls, image: Union[Path, numpy.ndarray, Image.Image, None], device: torch.device) -> Union[Tuple[str, Dict[str, Any]], torch.Tensor, None]:
+    def load(cls, image: Union[Path, numpy.ndarray, Image.Image, None], device: torch.device, params_key: str = None) -> Union[Tuple[str, Dict[str, Any]], torch.Tensor, None]:
         """
         Load an image into memory
   
@@ -142,9 +153,12 @@ class JtpImageManager(metaclass=Singleton):
         if image is not None and isinstance(image, Path):
             # Image is a path to an image, so load it with PIL
             image = str(image)
-            if cls.is_done(image):
+            if cls.is_done(image, params_key):
                 ComfyLogger().log(f"Image {image} already processed, using from cache", "WARNING", True)
-                return ComfyCache.get(f'image.{image}.output')
+                output = ComfyCache.get(f'image.{image}.output')
+                if params_key and isinstance(output, dict):
+                    return output[params_key]
+                return output
             if cls.is_cached(image):
                 ComfyLogger().log(f"Image {image} already loaded, using from cache", "WARNING", True)
                 ComfyCache.set(f'image.{image}.used_timestamp', time.time())
@@ -158,16 +172,19 @@ class JtpImageManager(metaclass=Singleton):
                     "timestamp": time.time(),
                     "used_timestamp": time.time(),
                     "device": device,
-                    "output": None
+                    "output": {}
                 })
                 ComfyLogger().log(f"Image: {image} loaded into cache", "DEBUG", True)
                 image_input = ComfyCache.get(f'image.{image}.input')
         elif image is not None and isinstance(image, numpy.ndarray):
             # Image is a numpy array, so convert it to a PIL image
             image_hash = hashlib.sha256(image.tobytes(), usedforsecurity=False).hexdigest()
-            if cls.is_done(image_hash):
+            if cls.is_done(image_hash, params_key):
                 ComfyLogger().log(f"Image {image} already processed, using from cache", "WARNING", True)
-                return ComfyCache.get(f'image.{image_hash}.output')
+                output = ComfyCache.get(f'image.{image_hash}.output')
+                if params_key and isinstance(output, dict):
+                    return output[params_key]
+                return output
             if cls.is_cached(image_hash):
                 ComfyLogger().log(f"Image {image_hash} already loaded, using from cache", "WARNING", True)
                 ComfyCache.set(f'image.{image_hash}.used_timestamp', time.time())
@@ -178,7 +195,7 @@ class JtpImageManager(metaclass=Singleton):
                     "timestamp": time.time(),
                     "used_timestamp": time.time(),
                     "device": device,
-                    "output": None
+                    "output": {}
                 })
                 ComfyLogger().log(f"Image {image_hash} loaded into cache", "DEBUG", True)
                 image_input = ComfyCache.get(f'image.{image_hash}.input')
@@ -186,21 +203,24 @@ class JtpImageManager(metaclass=Singleton):
             # Image is a PIL image, we need to sha256 hash it
             img = numpy.array(image.convert("RGBA"), dtype=numpy.uint8)
             image_hash = hashlib.sha256(img.tobytes(), usedforsecurity=False).hexdigest()
-            if cls.is_done(image_hash):
+            if cls.is_done(image_hash, params_key):
                 ComfyLogger().log(f"Image {image} already processed, using from cache", "WARNING", True)
-                return ComfyCache.get(f'image.{image_hash}.output')
+                output = ComfyCache.get(f'image.{image_hash}.output')
+                if params_key and isinstance(output, dict):
+                    return output[params_key]
+                return output
             if cls.is_cached(image_hash):
                 ComfyLogger().log(f"Image {image_hash} already loaded, using from cache", "WARNING", True)
                 ComfyCache.set(f'image.{image_hash}.used_timestamp', time.time())
                 image_input = ComfyCache.get(f'image.{image_hash}.input')
             else:
                 ComfyCache.set(f'image.{image_hash}', {
-					"input": image.convert("RGBA"),
-					"timestamp": time.time(),
-					"used_timestamp": time.time(),
-					"device": device,
-					"output": None
-				})
+    	"input": image.convert("RGBA"),
+    	"timestamp": time.time(),
+    	"used_timestamp": time.time(),
+    	"device": device,
+    	"output": {}
+    })
                 ComfyLogger().log(f"Image {image_hash} loaded into cache", "DEBUG", True)
                 image_input = image
         else:
@@ -249,26 +269,31 @@ class JtpImageManager(metaclass=Singleton):
         return False
 
     @classmethod
-    def commit_cache(cls, image, output: Tuple[str, Dict[str, Any]]) -> bool:
+    def commit_cache(cls, image, output: Tuple[str, Dict[str, Any]], params_key: str = None) -> bool:
         """
         Commit the output of an image to the cache
         """
         from ..helpers.logger import ComfyLogger
-        if image is not None and isinstance(image, Path) and output is not None:
-            image = str(image)
-            if cls.is_cached(image):
-                ComfyCache.set(f'image.{image}.output', output)
-                return True
-        elif image is not None and isinstance(image, numpy.ndarray) and output is not None:
-            image_hash = hashlib.sha256(image.tobytes(), usedforsecurity=False).hexdigest()
-            if cls.is_cached(image_hash):
-                ComfyCache.set(f'image.{image_hash}.output', output)
-                return True
-        elif image is not None and isinstance(image, Image.Image) and output is not None:
+        
+        image_key = None
+        if image is not None and isinstance(image, Path):
+            image_key = str(image)
+        elif image is not None and isinstance(image, numpy.ndarray):
+            image_key = hashlib.sha256(image.tobytes(), usedforsecurity=False).hexdigest()
+        elif image is not None and isinstance(image, Image.Image):
             img = numpy.array(image.convert("RGBA"), dtype=numpy.uint8)
-            image_hash = hashlib.sha256(img.tobytes(), usedforsecurity=False).hexdigest()
-            if cls.is_cached(image_hash):
-                ComfyCache.set(f'image.{image_hash}.output', output)
+            image_key = hashlib.sha256(img.tobytes(), usedforsecurity=False).hexdigest()
+            
+        if image_key is not None and output is not None:
+            if cls.is_cached(image_key):
+                if params_key:
+                    current_output = ComfyCache.get(f'image.{image_key}.output')
+                    if not isinstance(current_output, dict):
+                        current_output = {}
+                    current_output[params_key] = output
+                    ComfyCache.set(f'image.{image_key}.output', current_output)
+                else:
+                    ComfyCache.set(f'image.{image_key}.output', output)
                 return True
         else:
             ComfyLogger().log("Nothing to commit to cache", "ERROR", True)

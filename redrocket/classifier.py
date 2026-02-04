@@ -47,7 +47,13 @@ class JtpInference(metaclass=Singleton):
         # if cls().device != device:
         #     JtpModelManager().switch_device(model_name, device)
         #     cls().device = device
-        tensor = JtpImageManager().load(image=image, device=device)
+        
+        # Create a unique key for the parameters to handle caching correctly
+        import hashlib
+        params_string = f"{model_name}|{tags_name}|{steps}|{threshold}|{exclude_tags}|{replace_underscore}|{trailing_comma}"
+        params_key = hashlib.sha256(params_string.encode()).hexdigest()
+        
+        tensor = JtpImageManager().load(image=image, device=device, params_key=params_key)
         if tensor is None:
             ComfyLogger().log(message="Image could not be loaded", type="ERROR", always=True)
             return "", {}
@@ -72,7 +78,7 @@ class JtpInference(metaclass=Singleton):
                 return "", {}
         ComfyLogger().log(message="Processing tags...", type="DEBUG", always=True)
         tags_str, tag_scores = JtpTagManager().process_tags(tags_name=tags_name, values=values, indices=indices, threshold=threshold, exclude_tags=exclude_tags, replace_underscore=replace_underscore, trailing_comma=trailing_comma)
-        if not JtpImageManager().commit_cache(image=image, output=(tags_str, tag_scores)):
+        if not JtpImageManager().commit_cache(image=image, output=(tags_str, tag_scores), params_key=params_key):
             ComfyLogger().log(message="Image cache could not be committed", type="WARN", always=True)
             return tags_str, tag_scores
         ComfyLogger().log(message=f"Classification complete: {tags_str}", type="INFO", always=True)
