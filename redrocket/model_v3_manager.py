@@ -8,6 +8,7 @@ import safetensors.torch
 from safetensors import safe_open
 from torch.nn import Identity
 from tqdm import tqdm
+import comfy.model_management
 
 from ..helpers.cache import CacheCleanupMethod, ComfyCache
 from ..helpers.config import ComfyExtensionConfig
@@ -83,12 +84,21 @@ class JtpModelV3Manager(metaclass=Singleton):
 
             tags = metadata["classifier.labels"].split("\n")
             
+            # Determine appropriate dtype and device
+            target_device = comfy.model_management.get_torch_device()
+            if comfy.model_management.should_use_bf16(device=target_device):
+                target_dtype = torch.bfloat16
+            elif comfy.model_management.should_use_fp16(device=target_device):
+                target_dtype = torch.float16
+            else:
+                target_dtype = torch.float32
+
             model = timm.create_model(
                 'naflexvit_so400m_patch16_siglip',
                 pretrained=False, num_classes=0,
                 pos_embed_interp_mode="bilinear",
                 weight_init="skip", fix_init=False,
-                device="cpu", dtype=torch.bfloat16,
+                device="cpu", dtype=target_dtype,
             )
 
             variant = arch[31:]
@@ -103,7 +113,7 @@ class JtpModelV3Manager(metaclass=Singleton):
             elif variant == "+rr_hydra":
                 model.attn_pool = HydraPool.for_state(
                     state_dict, "attn_pool.",
-                    device="cpu", dtype=torch.bfloat16
+                    device="cpu", dtype=target_dtype
                 )
                 model.head = model.attn_pool.create_head()
                 model.num_classes = len(tags)
@@ -112,10 +122,10 @@ class JtpModelV3Manager(metaclass=Singleton):
             else:
                 raise ValueError(f"Unrecognized model variant: {variant}")
 
-            model.eval().to(dtype=torch.bfloat16)
+            model.eval().to(dtype=target_dtype)
             
             # Load state dict
-            msg = model.load_state_dict(state_dict, strict=False) 
+            msg = model.load_state_dict(state_dict, strict=True)
             
             # Move to device
             model.to(device=device)

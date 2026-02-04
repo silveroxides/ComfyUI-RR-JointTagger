@@ -6,6 +6,7 @@ from typing import Optional, Tuple, Union, Dict, Any, List
 import hashlib
 import threading
 from torch.nn import Parameter
+import comfy.model_management
 
 from .image_v3_manager import JtpImageV3Manager
 from .tag_v3_manager import JtpTagV3Manager
@@ -18,9 +19,8 @@ class JtpInferenceV3(metaclass=Singleton):
     """
     Inference for JTP-3 Hydra.
     """
-    def __init__(self, device: Optional[torch.device] = torch.device('cpu')) -> None:
-        torch.set_grad_enabled(False)
-        self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    def __init__(self, device: Optional[torch.device] = None) -> None:
+        self.device = device if device is not None else comfy.model_management.get_torch_device()
         self.model_lock = threading.Lock()
 
     @classmethod
@@ -53,13 +53,27 @@ class JtpInferenceV3(metaclass=Singleton):
                 model.attn_pool.out_proj.weight = Parameter(saved_p[[tag_idx], :, :], requires_grad=False)
 
                 with torch.enable_grad():
-                    for intermediate in intermediates:
-                        intermediate.requires_grad_(True).retain_grad()
+                    for i, intermediate in enumerate(intermediates):
+                        # Ensure we have a fresh leaf tensor that requires grad
+                        # and keep it in the list for grad retrieval later
+                        feat = intermediate.detach().clone().requires_grad_(True)
+                        feat.retain_grad()
+                        intermediates[i] = feat
+
                         # Forward pass through the head with sliced weights
-                        # Note: forward_head usually takes (x, pre_logits=False).
-                        # JTP-3 model.py forward_head implementation details?
-                        # In JTP-3 app.py: model.forward_head(intermediate, patch_valid=patch_valid)[0, 0].backward()
-                        model.forward_head(intermediate, patch_valid=patch_valid)[0, 0].backward()
+                        logits = model.forward_head(feat, patch_valid=patch_valid)
+                        
+                        # Check if logits require grad to avoid the reported RuntimeError
+                        if not logits.requires_grad:
+                            # This might happen if the model is in a state that blocks gradients
+                            # or if forward_head detaches the output.
+                            # We can try to force it by adding a dummy operation with the input
+                            logits = logits + (feat.sum() * 0.0)
+
+                        if logits.requires_grad:
+                            logits[0, 0].backward()
+                        else:
+                            ComfyLogger().log(f"Warning: logits for intermediate {i} do not require grad even after forcing.", "WARNING", True)
             finally:
                 model.attn_pool.q = saved_q
                 model.attn_pool.out_proj.weight = saved_p
@@ -136,7 +150,12 @@ class JtpInferenceV3(metaclass=Singleton):
         patches, coords, valid = result
         
         # Prepare inputs
-        p_d = patches.unsqueeze(0).to(dtype=torch.bfloat16).div_(127.5).sub_(1.0)
+        # Use the model's dtype
+        target_dtype = getattr(model, "dtype", torch.float32)
+        if hasattr(model, "kv") and hasattr(model.kv, "weight"):
+            target_dtype = model.kv.weight.dtype
+
+        p_d = patches.unsqueeze(0).to(dtype=target_dtype).div_(127.5).sub_(1.0)
         pc_d = coords.unsqueeze(0).to(dtype=torch.int32)
         pv_d = valid.unsqueeze(0)
         
@@ -153,7 +172,15 @@ class JtpInferenceV3(metaclass=Singleton):
                 output_dict=True,
                 output_fmt='NLC'
             )
-            logits = model.forward_head(features["image_features"], patch_valid=pv_d)
+            # Support both JTP-3 specific and standard timm keys
+            image_features = features.get("image_features")
+            if image_features is None:
+                image_features = features.get("features")
+
+            if image_features is None:
+                 raise KeyError(f"Model output missing pooled features. Keys: {list(features.keys())}")
+
+            logits = model.forward_head(image_features, patch_valid=pv_d)
             
             probits = torch.sigmoid(logits[0].to(dtype=torch.float32))
             probits.mul_(2.0).sub_(1.0) # Scale to -1..1
@@ -219,9 +246,6 @@ class JtpInferenceV3(metaclass=Singleton):
             
             if target_idx >= 0:
                 # Need original PIL image for composite
-                # If 'image' is PIL, use it. If tensor/numpy, we need to convert or use 'result' input?
-                # JtpImageV3Manager.load processes image.
-                # We can use the original 'image' if it's PIL.
                 display_img = None
                 if isinstance(image, Image.Image):
                     display_img = image.convert("RGB")
@@ -232,6 +256,9 @@ class JtpInferenceV3(metaclass=Singleton):
                 
                 if display_img:
                     try:
+                        target_tag_name = tags[target_idx]
+                        ComfyLogger().log(f"Generating CAM for tag: {target_tag_name} (index {target_idx})", "DEBUG", True)
+                        
                         cam_image = cls.run_cam(
                             model, display_img, features, target_idx, cam_depth,
                             pc_d, pv_d
