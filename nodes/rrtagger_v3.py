@@ -35,8 +35,10 @@ class Jtp3HydraTagger(ComfyNodeABC):
             "cam_depth": (IO.INT, {"default": 1, "min": 1, "max": 27, "step": 1, "display": "slider"}),
             "seqlen": (IO.INT, {"default": 1024, "min": 64, "max": 2048, "step": 64}),
             "implications_mode": (["inherit", "constrain", "remove", "constrain-remove", "off"], {"default": "inherit"}),
-            "exclude_categories": (IO.STRING, {"multiline": True, "tooltip": "Comma separated categories (e.g. artist, character, species, copyright, meta, lore). Requires tag metadata."}),
+            "exclude_tags": (IO.STRING, {"multiline": True, "tooltip": "Comma separated tags to exclude (e.g. humanoid, 1girl, etc)."}),
             "seed": (IO.INT, {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+            "replace_underscore": (IO.BOOLEAN, {"default": True, "tooltip": "Replace underscores with spaces in tags."}),
+            "trailing_comma": (IO.BOOLEAN, {"default": False, "tooltip": "Add a trailing comma to the tag string."}),
         }}
 
     RETURN_TYPES: Tuple[str] = (IO.STRING, IO.STRING, IO.IMAGE)
@@ -46,21 +48,20 @@ class Jtp3HydraTagger(ComfyNodeABC):
     OUTPUT_NODE: bool = True
     CATEGORY: str = "🐺 Furry Diffusion"
 
-    def tag(self, 
-            image: Image.Image, 
-            model: str, 
-            threshold: float, 
-            cam_depth: int, 
-            seqlen: int, 
-            implications_mode: str, 
+    def tag(self,
+            image: Image.Image,
+            model: str,
+            threshold: float,
+            cam_depth: int,
+            seqlen: int,
+            implications_mode: str,
             seed: int,
-            exclude_categories: str = "") -> Dict[str, Any]:
+            exclude_tags: str = "",
+            replace_underscore: bool = True,
+            trailing_comma: bool = False) -> Dict[str, Any]:
         
         device = comfy.model_management.get_torch_device()
         torch.manual_seed(seed)
-        
-        # Parse exclude categories
-        categories_list = [c.strip() for c in exclude_categories.split(",") if c.strip()]
         
         tensor: np.ndarray = image * 255
         tensor = np.array(tensor, dtype=np.uint8)
@@ -81,8 +82,10 @@ class Jtp3HydraTagger(ComfyNodeABC):
                 cam_depth=cam_depth,
                 seqlen=seqlen,
                 implications_mode=implications_mode,
-                exclude_categories=categories_list,
-                seed=seed
+                exclude_tags=exclude_tags,
+                seed=seed,
+                replace_underscore=replace_underscore,
+                trailing_comma=trailing_comma
             )
             
             tags_list.append(tags_str)

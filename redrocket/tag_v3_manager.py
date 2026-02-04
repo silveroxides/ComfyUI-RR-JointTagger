@@ -138,15 +138,23 @@ class JtpTagV3Manager(metaclass=Singleton):
                      model_name: str,
                      threshold: float,
                      implications_mode: str = "inherit",
-                     exclude_categories: List[str] = []) -> Tuple[str, Dict[str, float]]:
+                     exclude_tags: str = "",
+                     replace_underscore: bool = True,
+                     trailing_comma: bool = False) -> Tuple[str, Dict[str, float]]:
         
         metadata = ComfyCache.get(f'tags_v3.{model_name}')
         if not metadata:
             return "", {}
 
-        # Convert exclude categories strings to ints
-        exclude_ids = {TAG_CATEGORIES[cat] for cat in exclude_categories if cat in TAG_CATEGORIES}
-
+        # Parse exclude tags (replace underscores with spaces for consistency if tags in metadata use spaces,
+        # or we normalize both side. JTP tags usually have underscores in CSV?)
+        # V2 logic: corrected_excluded_tags = [tag.replace("_", " ").strip() ...]
+        # Let's check metadata keys.
+        # process_tags in V2 checks: `if tag not in corrected_excluded_tags`
+        # and `tag` comes from `tags_data` keys.
+        
+        corrected_excluded_tags = {tag.replace("_", " ").strip() for tag in exclude_tags.split(",") if tag.strip()}
+        
         labels = predictions.copy()
 
         def inherit_implications(labels, antecedent):
@@ -188,11 +196,19 @@ class JtpTagV3Manager(metaclass=Singleton):
             if prob < threshold:
                 continue
             
-            if tag in metadata:
-                cat_id = metadata[tag][0]
-                if cat_id in exclude_ids:
-                    continue
+            # Filter excluded tags
+            # We assume tags in labels might have underscores or spaces depending on how they were loaded?
+            # In V3 metadata loading, we didn't change underscores.
+            # In V2, it seems tags in memory have spaces?
+            # JTP-3 tags file (CSV) usually has underscores (e.g. "blue_sky").
+            # But the user might input "blue sky" or "blue_sky".
+            # We should normalize to match.
             
+            # Check if tag (normalized) is in excluded set
+            tag_check = tag.replace("_", " ")
+            if tag_check in corrected_excluded_tags:
+                continue
+                
             filtered_labels[tag] = prob
 
         # Remove implications step
@@ -207,5 +223,12 @@ class JtpTagV3Manager(metaclass=Singleton):
         sorted_items = sorted(filtered_labels.items(), key=lambda x: x[1], reverse=True)
         final_tags = {k: v for k, v in sorted_items}
         
-        tag_string = ", ".join(final_tags.keys())
+        tag_list = list(final_tags.keys())
+        if replace_underscore:
+            tag_list = [t.replace("_", " ") for t in tag_list]
+            
+        tag_string = ", ".join(tag_list)
+        if trailing_comma and tag_string:
+            tag_string += ","
+
         return tag_string, final_tags
