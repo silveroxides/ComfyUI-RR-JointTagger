@@ -48,19 +48,19 @@ class JtpModelV3Manager(metaclass=Singleton):
         self.download_complete_callback = download_complete_callback
         ComfyCache.set_max_size('model_v3', 1)
         ComfyCache.set_cachemethod('model_v3', CacheCleanupMethod.ROUND_ROBIN)
-    
+
     def __del__(self) -> None:
         ComfyCache.flush('model_v3')
         gc.collect()
-    
+
     @classmethod
     def is_loaded(cls, model_name: str) -> bool:
         return ComfyCache.get(f'model_v3.{model_name}') is not None and ComfyCache.get(f'model_v3.{model_name}.model') is not None
-    
+
     @classmethod
     def load(cls, model_name: str, device: torch.device = torch.device('cpu')) -> Tuple[bool, List[str]]:
         model_path = os.path.join(cls().model_basepath, f"{model_name}.safetensors")
-        
+
         if cls.is_loaded(model_name):
             ComfyLogger().log(message=f"Model {model_name} already loaded", type="WARNING", always=True)
             tags = ComfyCache.get(f'model_v3.{model_name}.tags')
@@ -69,20 +69,20 @@ class JtpModelV3Manager(metaclass=Singleton):
         if not os.path.exists(model_path):
             ComfyLogger().log(message=f"Model {model_name} not found in path: {model_path}", type="ERROR", always=True)
             return False, []
-        
+
         ComfyLogger().log(message=f"Loading JTP-3 model {model_name} from {model_path}...", type="INFO", always=True)
-        
+
         try:
             with safe_open(model_path, framework="pt", device="cpu") as file:
                 metadata = file.metadata()
                 state_dict = {key: file.get_tensor(key) for key in file.keys()}
-            
+
             arch = metadata.get("modelspec.architecture", "")
             if not arch.startswith("naflexvit_so400m_patch16_siglip"):
                 raise ValueError(f"Unrecognized model architecture: {arch}")
 
             tags = metadata["classifier.labels"].split("\n")
-            
+
             model = timm.create_model(
                 'naflexvit_so400m_patch16_siglip',
                 pretrained=False, num_classes=0,
@@ -113,13 +113,13 @@ class JtpModelV3Manager(metaclass=Singleton):
                 raise ValueError(f"Unrecognized model variant: {variant}")
 
             model.eval().to(dtype=torch.bfloat16)
-            
+
             # Load state dict
-            msg = model.load_state_dict(state_dict, strict=False) 
-            
+            msg = model.load_state_dict(state_dict, strict=False)
+
             # Move to device
             model.to(device=device)
-            
+
             ComfyCache.set(f'model_v3.{model_name}', {
                 "model": model,
                 "tags": tags,
@@ -127,7 +127,7 @@ class JtpModelV3Manager(metaclass=Singleton):
             })
             ComfyLogger().log(message=f"Model {model_name} loaded successfully", type="INFO", always=True)
             return True, tags
-            
+
         except Exception as e:
             ComfyLogger().log(message=f"Error loading model {model_name}: {e}", type="ERROR", always=True)
             return False, []
@@ -135,7 +135,7 @@ class JtpModelV3Manager(metaclass=Singleton):
     @classmethod
     def is_installed(cls, model_name: str) -> bool:
         return any(model_name + ".safetensors" in s for s in cls.list_installed())
-    
+
     @classmethod
     def list_installed(cls) -> List[str]:
         model_path = os.path.abspath(cls().model_basepath)
@@ -145,21 +145,21 @@ class JtpModelV3Manager(metaclass=Singleton):
             return []
         models = list(filter(lambda x: x.endswith(".safetensors"), os.listdir(model_path)))
         return models
-    
+
     @classmethod
     def download(cls, model_name: str) -> bool:
         # Create model directory if it doesn't exist
         os.makedirs(cls().model_basepath, exist_ok=True)
-        
+
         config = ComfyExtensionConfig().get()
         hf_endpoint: str = config["huggingface_endpoint"]
         if not hf_endpoint.startswith("https://"):
             hf_endpoint = f"https://{hf_endpoint}"
         if hf_endpoint.endswith("/"):
             hf_endpoint = hf_endpoint.rstrip("/")
-        
+
         model_path = os.path.join(cls().model_basepath, f"{model_name}.safetensors")
-        
+
         # Use models_v3 config structure
         url: str = ComfyExtensionConfig().get(property=f"models_v3.{model_name}.url")
         if not url:
@@ -167,15 +167,15 @@ class JtpModelV3Manager(metaclass=Singleton):
              return False
 
         url = url.replace("{HF_ENDPOINT}", hf_endpoint)
-        
+
         ComfyLogger().log(message=f"Downloading model {model_name} from {url}", type="INFO", always=True)
         try:
             response = requests.get(url, stream=True)
             response.raise_for_status()
-            
+
             total_size = int(response.headers.get('content-length', 0))
             block_size = 1024
-            
+
             with open(model_path, 'wb') as file, tqdm(
                 desc=model_name,
                 total=total_size,
@@ -190,7 +190,7 @@ class JtpModelV3Manager(metaclass=Singleton):
                     downloaded += len(data)
                     if cls().download_progress_callback and total_size > 0:
                         cls().download_progress_callback(int(downloaded / total_size * 100), model_name)
-                        
+
             cls().download_complete_callback(model_name)
             return True
         except Exception as err:

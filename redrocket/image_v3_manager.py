@@ -82,15 +82,15 @@ class JtpImageV3Manager(metaclass=Singleton):
         def compute_resize(wh: tuple[int, int]) -> tuple[int, int]:
             h, w = JtpImageV3Manager.get_image_size_for_seq((wh[1], wh[0]), patch_size, max_seq_len)
             return w, h
-        
+
         # Simple resize using LANCZOS, avoiding full PIL.ImageCms complexity for now as ComfyUI handles color spaces usually
         w, h = compute_resize(img.size)
         if (w, h) != img.size:
             img = img.resize((w, h), resample=Image.Resampling.LANCZOS)
-        
+
         if img.mode != "RGB":
             img = img.convert("RGB")
-            
+
         return img
 
     @staticmethod
@@ -108,7 +108,7 @@ class JtpImageV3Manager(metaclass=Singleton):
         img_arr = np.asarray(img)
         if img_arr.shape[-1] == 4:
             img_arr = img_arr[:, :, :3]
-            
+
         patches = rearrange(
             img_arr,
             "(h p1) (w p2) c -> h w (p1 p2 c)",
@@ -145,10 +145,10 @@ class JtpImageV3Manager(metaclass=Singleton):
         Returns (patches, patch_coords, patch_valid) tensors OR cached output.
         """
         patch_size = 16 # Fixed for JTP-3
-        
+
         image_key = None
         pil_image = None
-        
+
         if image is not None and isinstance(image, Path):
             image_key = str(image)
             if os.path.exists(image_key):
@@ -161,7 +161,7 @@ class JtpImageV3Manager(metaclass=Singleton):
             img_arr = np.array(image.convert("RGB"))
             image_key = hashlib.sha256(img_arr.tobytes()).hexdigest()
             pil_image = image.convert("RGB")
-            
+
         if image_key is None or pil_image is None:
             ComfyLogger().log("No valid image provided", "ERROR", True)
             return None
@@ -169,7 +169,7 @@ class JtpImageV3Manager(metaclass=Singleton):
         # Check cache
         cache_key = f'image_v3.{image_key}'
         cached_output = ComfyCache.get(f'{cache_key}.output')
-        
+
         if params_key and cached_output and isinstance(cached_output, dict) and params_key in cached_output:
             ComfyLogger().log(f"Returning cached result for {image_key}", "DEBUG", True)
             return cached_output[params_key]
@@ -188,28 +188,28 @@ class JtpImageV3Manager(metaclass=Singleton):
         # Process image
         processed = cls.process_image(pil_image, patch_size, seqlen)
         patches, coords, valid = cls.patchify_image(processed, patch_size, seqlen)
-        
+
         # Store in cache
         if cached_input is None:
             cached_input = {}
-        
+
         cached_input[seqlen] = (patches, coords, valid)
-        
+
         ComfyCache.set(f'{cache_key}.input', cached_input)
         if ComfyCache.get(f'{cache_key}.output') is None:
              ComfyCache.set(f'{cache_key}.output', {}) # Initialize output dict
-             
+
         return patches.to(device), coords.to(device), valid.to(device)
 
     @classmethod
     def commit_cache(cls, image_key: str, output: Any, params_key: str) -> bool:
         if not image_key: return False
         cache_key = f'image_v3.{image_key}'
-        
+
         current_output = ComfyCache.get(f'{cache_key}.output')
         if current_output is None:
             current_output = {}
-            
+
         current_output[params_key] = output
         ComfyCache.set(f'{cache_key}.output', current_output)
         return True

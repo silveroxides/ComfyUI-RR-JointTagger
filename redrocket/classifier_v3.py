@@ -19,7 +19,6 @@ class JtpInferenceV3(metaclass=Singleton):
     Inference for JTP-3 Hydra.
     """
     def __init__(self, device: Optional[torch.device] = torch.device('cpu')) -> None:
-        torch.set_grad_enabled(False)
         self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model_lock = threading.Lock()
 
@@ -31,7 +30,7 @@ class JtpInferenceV3(metaclass=Singleton):
         intermediates = features.get("image_intermediates")
         if intermediates is None:
             intermediates = features.get("intermediates")
-            
+
         if intermediates is None:
              raise KeyError(f"Features dict missing 'image_intermediates' or 'intermediates'. Keys: {list(features.keys())}")
 
@@ -39,10 +38,13 @@ class JtpInferenceV3(metaclass=Singleton):
         # JTP-3 app.py logic:
         if len(intermediates) > cam_depth:
             intermediates = intermediates[-cam_depth:]
-        
+
+        # Ensure intermediates is a mutable list for in-place updates
+        intermediates = list(intermediates)
+
         # We need to use the instance lock
         instance = cls()
-        
+
         with instance.model_lock:
             saved_q = model.attn_pool.q
             saved_p = model.attn_pool.out_proj.weight
@@ -53,13 +55,44 @@ class JtpInferenceV3(metaclass=Singleton):
                 model.attn_pool.out_proj.weight = Parameter(saved_p[[tag_idx], :, :], requires_grad=False)
 
                 with torch.enable_grad():
-                    for intermediate in intermediates:
-                        intermediate.requires_grad_(True).retain_grad()
+                    # We need to process intermediates one by one or all together?
+                    # The original implementation seems to iterate.
+                    # BUT, forward_head likely expects a specific input structure.
+                    # Wait, 'intermediate' in forward_head(x) is usually the output of the transformer blocks.
+
+                    # If we iterate, we are doing multiple forward/backward passes.
+                    # Each intermediate is a tensor [B, N, C].
+
+                    # The issue reported is "element 0 of tensors does not require grad".
+                    # This happens when we call backward() on a tensor that has no history.
+
+                    for i in range(len(intermediates)):
+                        # Ensure the input tensor has requires_grad=True and is a leaf tensor for this subgraph.
+                        # We detach from any previous graph (inference was no_grad anyway).
+                        intermediate_tensor = intermediates[i].detach()
+                        intermediate_tensor.requires_grad_(True)
+
+                        # We might need to retain grad if it's not a leaf, but here it IS the leaf of our new graph.
+                        # However, for safety and access later:
+                        intermediate_tensor.retain_grad()
+
                         # Forward pass through the head with sliced weights
-                        # Note: forward_head usually takes (x, pre_logits=False).
-                        # JTP-3 model.py forward_head implementation details?
-                        # In JTP-3 app.py: model.forward_head(intermediate, patch_valid=patch_valid)[0, 0].backward()
-                        model.forward_head(intermediate, patch_valid=patch_valid)[0, 0].backward()
+                        # Note: forward_head usually takes the *last* hidden state.
+                        # If 'intermediates' are layers, does forward_head handle them all?
+                        # Assuming forward_head(x) expects the transformer output.
+
+                        logits = model.forward_head(intermediate_tensor, patch_valid=patch_valid)
+
+                        # Backward pass
+                        # We want to maximize the target class score (logits[0, 0] since we sliced the head to size 1)
+                        if logits.requires_grad:
+                            logits[0, 0].backward()
+                        else:
+                             # This should not happen if intermediate_tensor requires grad and is used in forward_head
+                             ComfyLogger().log("CAM: Logits do not require grad, skipping backward.", "WARNING")
+
+                        # Update the list so we can access .grad later
+                        intermediates[i] = intermediate_tensor
             finally:
                 model.attn_pool.q = saved_q
                 model.attn_pool.out_proj.weight = saved_p
@@ -101,16 +134,16 @@ class JtpInferenceV3(metaclass=Singleton):
         cam_mode: str = "auto",
         cam_tag: str = ""
     ) -> Tuple[str, Dict[str, float], Optional[Image.Image]]:
-        
+
         # Hash params for caching
         params_string = f"{model_name}|{threshold}|{cam_depth}|{seqlen}|{implications_mode}|{exclude_tags}|{exclude_categories}|{prefix}|{original_tags}|{seed}|{replace_underscore}|{trailing_comma}|{cam_mode}|{cam_tag}"
         params_key = hashlib.sha256(params_string.encode()).hexdigest()
-        
+
         # Load Model
         if JtpModelV3Manager().is_installed(model_name) is False:
             if not JtpModelV3Manager().download(model_name):
                 return "", {}, None
-        
+
         if JtpTagV3Manager.is_loaded(model_name) is False:
              JtpTagV3Manager.download(model_name)
              if not JtpTagV3Manager.load(model_name):
@@ -120,30 +153,30 @@ class JtpInferenceV3(metaclass=Singleton):
         loaded, tags = JtpModelV3Manager.load(model_name, device=device)
         if not loaded:
             return "", {}, None
-            
+
         model = ComfyCache.get(f'model_v3.{model_name}.model')
-        
+
         # Load/Process Image
         result = JtpImageV3Manager.load(image, device=device, seqlen=seqlen, params_key=params_key)
-        
+
         if isinstance(result, tuple) and len(result) == 3 and isinstance(result[1], Dict): # Cached output (tags, scores, cam)
              return result[0], result[1], result[2]
-        
+
         if result is None:
              return "", {}, None
-             
+
         # It's tensors: patches, coords, valid
         patches, coords, valid = result
-        
+
         # Prepare inputs
         p_d = patches.unsqueeze(0).to(dtype=torch.bfloat16).div_(127.5).sub_(1.0)
         pc_d = coords.unsqueeze(0).to(dtype=torch.int32)
         pv_d = valid.unsqueeze(0)
-        
+
         # Inference
         # We need gradients for CAM if we are going to run it?
         # No, JTP-3 app.py runs forward with no_grad, then enables grad only for the backward pass on intermediates.
-        
+
         with torch.no_grad():
             features = model.forward_intermediates(
                 p_d,
@@ -154,12 +187,12 @@ class JtpInferenceV3(metaclass=Singleton):
                 output_fmt='NLC'
             )
             logits = model.forward_head(features["image_features"], patch_valid=pv_d)
-            
+
             probits = torch.sigmoid(logits[0].to(dtype=torch.float32))
             probits.mul_(2.0).sub_(1.0) # Scale to -1..1
-            
+
             values, indices = probits.cpu().topk(250)
-            
+
             predictions = {
                 tags[idx.item()]: val.item()
                 for idx, val in sorted(
@@ -175,13 +208,13 @@ class JtpInferenceV3(metaclass=Singleton):
             exclude_categories, prefix, original_tags,
             replace_underscore=replace_underscore, trailing_comma=trailing_comma
         )
-        
+
         cam_image = None
-        
+
         # CAM Logic
         if cam_mode != "none":
             target_idx = -1
-            
+
             if cam_mode == "auto":
                 # Use top 1 valid tag from filtered results
                 if top_tag_raw and top_tag_raw in tags:
@@ -189,7 +222,7 @@ class JtpInferenceV3(metaclass=Singleton):
                         target_idx = tags.index(top_tag_raw)
                     except ValueError:
                         ComfyLogger().log(f"Auto CAM: '{top_tag_raw}' found in tags list but index retrieval failed.", "WARNING")
-                
+
                 # Fallback to raw model top 1 if filtering removed everything but auto was requested?
                 # Or if process_tags returned nothing.
                 if target_idx == -1 and indices.numel() > 0:
@@ -204,7 +237,7 @@ class JtpInferenceV3(metaclass=Singleton):
                 # Find tag index
                 # Clean up input (remove trailing commas, whitespace)
                 clean_tag = cam_tag.strip().rstrip(",")
-                
+
                 try:
                     # Normalized check
                     if clean_tag in tags:
@@ -218,7 +251,7 @@ class JtpInferenceV3(metaclass=Singleton):
                             ComfyLogger().log(f"CAM Tag '{cam_tag}' (normalized: '{cam_tag_norm}') not found in model tags.", "WARNING")
                 except ValueError:
                     ComfyLogger().log(f"CAM Tag '{cam_tag}' caused a ValueError during lookup.", "WARNING")
-            
+
             if target_idx >= 0:
                 # Need original PIL image for composite
                 # If 'image' is PIL, use it. If tensor/numpy, we need to convert or use 'result' input?
@@ -229,9 +262,9 @@ class JtpInferenceV3(metaclass=Singleton):
                     display_img = image.convert("RGB")
                 elif isinstance(image, np.ndarray):
                     display_img = Image.fromarray(image).convert("RGB")
-                elif isinstance(image, Path) and os.path.exists(str(image)):
+                elif isinstance(image, Path) and image.exists():
                     display_img = Image.open(str(image)).convert("RGB")
-                
+
                 if display_img:
                     try:
                         cam_image = cls.run_cam(
@@ -246,10 +279,10 @@ class JtpInferenceV3(metaclass=Singleton):
         image_key = None
         if isinstance(image, Path): image_key = str(image)
         elif isinstance(image, np.ndarray): image_key = hashlib.sha256(image.tobytes()).hexdigest()
-        elif isinstance(image, Image.Image): 
+        elif isinstance(image, Image.Image):
              img_arr = np.array(image.convert("RGB"))
              image_key = hashlib.sha256(img_arr.tobytes()).hexdigest()
-             
+
         JtpImageV3Manager.commit_cache(image_key, (tag_str, final_scores, cam_image), params_key)
-        
+
         return tag_str, final_scores, cam_image

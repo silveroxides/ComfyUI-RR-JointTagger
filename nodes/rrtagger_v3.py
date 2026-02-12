@@ -20,7 +20,7 @@ class Jtp3HydraTagger(ComfyNodeABC):
     def INPUT_TYPES(cls) -> Dict[str, Any]:
         # Models list from config or manager
         # We need to initialize manager to list installed, or check config
-        # Ideally we list installed + available in config? 
+        # Ideally we list installed + available in config?
         # JtpModelV3Manager list_installed only lists files.
         # We should use config keys for dropdown?
         config = ComfyExtensionConfig().get()
@@ -69,21 +69,21 @@ class Jtp3HydraTagger(ComfyNodeABC):
             cam_tag: str = "",
             replace_underscore: bool = True,
             trailing_comma: bool = False) -> Dict[str, Any]:
-        
+
         device = comfy.model_management.get_torch_device()
         torch.manual_seed(seed)
-        
+
         tensor: np.ndarray = image * 255
         tensor = np.array(tensor, dtype=np.uint8)
         pbar = comfy.utils.ProgressBar(tensor.shape[0])
-        
+
         tags_list: List[str] = []
         scores_list: List[Dict[str, float]] = []
         cams_list: List[torch.Tensor] = []
-        
+
         for i in range(tensor.shape[0]):
             img: Image.Image = Image.fromarray(tensor[i]).convert("RGBA")
-            
+
             tags_str, scores, cam_img = JtpInferenceV3.run_classifier(
                 model_name=model,
                 device=device,
@@ -102,10 +102,10 @@ class Jtp3HydraTagger(ComfyNodeABC):
                 cam_mode=cam_mode,
                 cam_tag=cam_tag
             )
-            
+
             tags_list.append(tags_str)
             scores_list.append(scores)
-            
+
             if cam_img:
                 # Convert PIL to Tensor (HWC -> BHWC logic usually handled by Comfy, but output IMAGE expects float BHWC)
                 cam_np = np.array(cam_img).astype(np.float32) / 255.0
@@ -115,7 +115,7 @@ class Jtp3HydraTagger(ComfyNodeABC):
                 # Placeholder 64x64 black image if CAM is disabled/skipped
                 blank = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
                 cams_list.append(blank)
-                
+
             pbar.update(1)
 
         # Result formatting
@@ -131,32 +131,32 @@ class Jtp3HydraTagger(ComfyNodeABC):
         # So it returns a list of strings and a list of... dicts?
         # If specific nodes consume `scores`, they might expect dicts.
         # I'll keep it consistent with the original node logic.
-        
-        # Note on CAM output: OUTPUT_IS_LIST for IMAGE? 
+
+        # Note on CAM output: OUTPUT_IS_LIST for IMAGE?
         # ComfyUI handles list of tensors as batch?
         # If OUTPUT_IS_LIST is True for IMAGE, it expects a list of tensors [1, H, W, C].
         # Or a single tensor [B, H, W, C]?
         # If output is list, it processes batch element by element?
         # Usually IMAGE output is a single tensor [B, H, W, C].
         # But here we process inputs one by one.
-        # If we use OUTPUT_IS_LIST = (True, True, False) for (tags, scores, cam), 
+        # If we use OUTPUT_IS_LIST = (True, True, False) for (tags, scores, cam),
         # then we should return (tags_list, scores_list, torch.cat(cams_list, dim=0)).
         # Let's try to batch the CAMs into one tensor.
-        
+
         if cams_list:
             final_cam = torch.cat(cams_list, dim=0) # [B, H, W, C]
         else:
             final_cam = torch.zeros((1, 64, 64, 3)) # Dummy
-            
+
         # Return format: "result": (list, list, tensor)
         # But if OUTPUT_IS_LIST is True for tags, scores...
         # And False for CAM (since we combined it)?
         # Or True for CAM and return list of tensors?
         # Standard Comfy behavior: IMAGE is usually a batch tensor.
         # So I will set OUTPUT_IS_LIST = (True, True, False)
-        
+
         return {
-            "ui": {"tags": tags_list, "scores": scores_list}, 
+            "ui": {"tags": tags_list, "scores": scores_list},
             "result": (tags_list, scores_list, final_cam)
         }
 

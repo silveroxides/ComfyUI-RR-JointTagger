@@ -40,18 +40,18 @@ class JtpModelManager(metaclass=Singleton):
         self.download_complete_callback = download_complete_callback
         ComfyCache.set_max_size('model', 1)  # Adjust the max size as needed
         ComfyCache.set_cachemethod('model', CacheCleanupMethod.ROUND_ROBIN)
-    
+
     def __del__(self) -> None:
         ComfyCache.flush('model')
         gc.collect()
-    
+
     @classmethod
     def is_loaded(cls, model_name: str) -> bool:
         """
         Check if a RedRocket JTP Vision Transformer model is loaded into memory
         """
         return ComfyCache.get(f'model.{model_name}') is not None and ComfyCache.get(f'model.{model_name}.model') is not None
-    
+
     @classmethod
     def load(cls, model_name: str, version: int = 1, device: torch.device = torch.device('cpu')) -> bool:
         """
@@ -64,7 +64,7 @@ class JtpModelManager(metaclass=Singleton):
         if not os.path.exists(model_path):
             ComfyLogger().log(message=f"Model {model_name} not found in path: {model_path}",type= "ERROR", always=True)
             return False
-        
+
         ComfyLogger().log(message=f"Loading model {model_name} (version: {version}) from {model_path}...", type="INFO", always=True)
         model: torch.nn.Module = timm.create_model("vit_so400m_patch14_siglip_384.webli", pretrained=False, num_classes=9083)
         if f"{version}" == "2":
@@ -112,7 +112,7 @@ class JtpModelManager(metaclass=Singleton):
         ComfyCache.set(f'model.{model_name}.device', device)
         ComfyCache.set(f'model.{model_name}.model', model)
         return True
-    
+
     @classmethod
     def unload(cls, model_name: str) -> bool:
         """
@@ -133,7 +133,7 @@ class JtpModelManager(metaclass=Singleton):
         Check if a vision transformer model is installed in a directory
         """
         return any(model_name + ".safetensors" in s for s in cls.list_installed())
-    
+
     @classmethod
     def list_installed(cls) -> List[str]:
         """
@@ -147,7 +147,7 @@ class JtpModelManager(metaclass=Singleton):
         models = list(filter(
             lambda x: x.endswith(".safetensors"), os.listdir(model_path)))
         return models
-    
+
     @classmethod
     def download(cls, model_name: str) -> bool:
         """
@@ -159,16 +159,16 @@ class JtpModelManager(metaclass=Singleton):
             hf_endpoint = f"https://{hf_endpoint}"
         if hf_endpoint.endswith("/"):
             hf_endpoint = hf_endpoint.rstrip("/")
-        
+
         model_path = os.path.join(cls().model_basepath, f"{model_name}.safetensors")
-        
+
         url: str = ComfyExtensionConfig().get(property=f"models.{model_name}.url")
         url = url.replace("{HF_ENDPOINT}", hf_endpoint)
         if not url.endswith("/"):
             url += "/"
         if not url.endswith(".safetensors"):
             url += f"{model_name}.safetensors"
-        
+
         ComfyLogger().log(message=f"Downloading model {model_name} from {url}", type="INFO", always=True)
         with aiohttp.ClientSession() as session:
             try:

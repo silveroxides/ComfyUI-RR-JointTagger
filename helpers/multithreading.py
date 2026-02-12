@@ -10,7 +10,7 @@ from .metaclasses import Singleton
 #     """
 #     def __init__(self) -> None:
 #         pass
-# 
+#
 #     @classmethod
 #     def wait_for_async(cls, async_fn: Callable[[], Any], loop: Optional[asyncio.AbstractEventLoop] = None) -> Any:
 #         res: List[Any] = []

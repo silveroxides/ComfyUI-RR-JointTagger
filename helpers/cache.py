@@ -170,7 +170,7 @@ class ComfyCache(metaclass=Singleton):
             if key not in cache:
                 return CacheCleanupMethod.ROUND_ROBIN  # Default method if not set
             cache = cache[key]
-        
+
         if property in metadata and keys[-1] in metadata[property]:
             return metadata[property][keys[-1]]['cachemethod']
         return CacheCleanupMethod.ROUND_ROBIN
@@ -229,7 +229,7 @@ class ComfyCache(metaclass=Singleton):
             cache = cache[key]
             metadata = metadata.get(property, {})
             metadata = metadata.get(key, {})
-        
+
         if keys[-1] in cache:
             del cache[keys[-1]]
             if keys[-1] in metadata:

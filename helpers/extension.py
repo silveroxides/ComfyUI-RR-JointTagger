@@ -22,7 +22,7 @@ class ComfyExtension(metaclass=Singleton):
         """
         from config import ComfyExtensionConfig
         return str(ComfyExtensionConfig().get()["name"]).lower().replace(" ", "_").replace('/', ".")
-    
+
     @classmethod
     def extension_dir(cls, subpath: Optional[str] = None, mkdir: bool = False) -> str:
         """
@@ -36,7 +36,7 @@ class ComfyExtension(metaclass=Singleton):
             from .logger import ComfyLogger
             ComfyLogger().log(f"Directory {dir} does not exist, it is being created", type="WARNING", always=True)
             os.makedirs(dir)
-        return dir 
+        return dir
 
     @classmethod
     def comfy_dir(cls, subpath: Optional[str] = None) -> str:
@@ -48,7 +48,7 @@ class ComfyExtension(metaclass=Singleton):
             dir = os.path.join(dir, subpath)
         dir = os.path.abspath(dir)
         return dir
-    
+
     @classmethod
     def web_extension_dir(cls) -> str:
         """
@@ -63,7 +63,7 @@ class ComfyExtension(metaclass=Singleton):
             os.makedirs(dir)
         dir += os.sep + (os.sep.join(names[1:]))
         return dir
-    
+
     @classmethod
     def client_id(cls) -> Union[str, None]:
         """

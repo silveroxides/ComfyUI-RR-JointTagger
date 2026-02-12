@@ -57,7 +57,7 @@ class ComfyNode(metaclass=Singleton):
             "progress": progress,
             "text": text
 		}, client_id)
-    
+
     @classmethod
     def get_module_vars(cls, module_path: str) -> Tuple[str, Dict[str, Any]]:
         """
@@ -106,5 +106,5 @@ class ComfyNode(metaclass=Singleton):
                                 if name not in vars:
                                     vars.update({name: {key: value}})
                                 else:
-                                    vars[name].update({key: value})	
+                                    vars[name].update({key: value})
         return vars

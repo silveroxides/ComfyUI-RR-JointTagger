@@ -22,7 +22,7 @@ class JtpInference(metaclass=Singleton):
     @classmethod
     def run_classifier(cls, model_name: str, tags_name: str, device: torch.device, image: Union[Image.Image, np.ndarray, Path], steps: float, threshold: float, exclude_tags: str = "", replace_underscore: bool = True, trailing_comma: bool = False) -> Tuple[str, Dict[str, float]]:
         from ..helpers.logger import ComfyLogger
-        
+
         model_version: int = ComfyCache.get(f'config.models.{model_name}.version')
         tags_version: int = ComfyCache.get(f'config.tags.{tags_name}.version')
         ComfyLogger().log(message=f"Model version: {model_version}, Tags version: {tags_version}", type="DEBUG", always=True)
@@ -35,7 +35,7 @@ class JtpInference(metaclass=Singleton):
         if JtpTagManager().is_installed(tags_name) is False:
             if not JtpTagManager().download(tags_name):
                 ComfyLogger().log(f"Tags {tags_name} could not be downloaded", "ERROR", True)
-                return "", {}            
+                return "", {}
         if JtpModelManager().is_loaded(model_name) is False:
             if not JtpModelManager().load(model_name=model_name, version=model_version, device=device):
                 ComfyLogger().log(f"Model {model_name} could not be loaded", "ERROR", True)
@@ -47,12 +47,12 @@ class JtpInference(metaclass=Singleton):
         # if cls().device != device:
         #     JtpModelManager().switch_device(model_name, device)
         #     cls().device = device
-        
+
         # Create a unique key for the parameters to handle caching correctly
         import hashlib
         params_string = f"{model_name}|{tags_name}|{steps}|{threshold}|{exclude_tags}|{replace_underscore}|{trailing_comma}"
         params_key = hashlib.sha256(params_string.encode()).hexdigest()
-        
+
         tensor = JtpImageManager().load(image=image, device=device, params_key=params_key)
         if tensor is None:
             ComfyLogger().log(message="Image could not be loaded", type="ERROR", always=True)

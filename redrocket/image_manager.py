@@ -96,7 +96,7 @@ class JtpImageManager(metaclass=Singleton):
     def __init__(self, cache_maxsize: int = 1, cache_method: CacheCleanupMethod = CacheCleanupMethod.ROUND_ROBIN) -> None:
         ComfyCache.set_max_size('image', 0)
         ComfyCache.set_cachemethod('image', CacheCleanupMethod[cache_method.name])
-  
+
     def __del__(self) -> None:
         ComfyCache.flush('image')
         import gc
@@ -117,16 +117,16 @@ class JtpImageManager(metaclass=Singleton):
         is_cached = cls.is_cached(image_name)
         if not is_cached:
             return False
-            
+
         output = ComfyCache.get(f'image.{image_name}.output')
         if output is None:
             return False
-            
+
         if params_key is not None:
             return isinstance(output, dict) and params_key in output
-            
+
         return True
-    
+
     @classmethod
     def get_transform(cls, width: int, height: int, interpolation, grow, pad, background: Tuple[int, int, int]) -> transforms.Compose:
         """
@@ -139,12 +139,12 @@ class JtpImageManager(metaclass=Singleton):
             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True),
             transforms.CenterCrop(size=(width, height)),
         ])
-  
+
     @classmethod
     def load(cls, image: Union[Path, numpy.ndarray, Image.Image, None], device: torch.device, params_key: str = None) -> Union[Tuple[str, Dict[str, Any]], torch.Tensor, None]:
         """
         Load an image into memory
-  
+
         - Return None if no image is provided or there was an error loading it
         - Return a loaded tensor if we need to perform inference on it
         - Return a tuple containing tags and tag:score dict if we are already through with it.
@@ -274,7 +274,7 @@ class JtpImageManager(metaclass=Singleton):
         Commit the output of an image to the cache
         """
         from ..helpers.logger import ComfyLogger
-        
+
         image_key = None
         if image is not None and isinstance(image, Path):
             image_key = str(image)
@@ -283,7 +283,7 @@ class JtpImageManager(metaclass=Singleton):
         elif image is not None and isinstance(image, Image.Image):
             img = numpy.array(image.convert("RGBA"), dtype=numpy.uint8)
             image_key = hashlib.sha256(img.tobytes(), usedforsecurity=False).hexdigest()
-            
+
         if image_key is not None and output is not None:
             if cls.is_cached(image_key):
                 if params_key:

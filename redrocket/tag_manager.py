@@ -23,25 +23,25 @@ class JtpTagManager(metaclass=Singleton):
         self.download_complete_callback = download_complete_callback
         ComfyCache.set_max_size('tags', 1)
         ComfyCache.set_cachemethod('tags', CacheCleanupMethod.ROUND_ROBIN)
-    
+
     def __del__(self) -> None:
         ComfyCache.flush('tags')
         gc.collect()
-    
+
     @classmethod
     def is_loaded(cls, tags_name: str) -> bool:
         """
         Check if tags are loaded into memory
         """
         return ComfyCache.get(f'tags.{tags_name}') is not None and ComfyCache.get(f'tags.{tags_name}.tags') is not None
-    
+
     @classmethod
     def load(cls, tags_name: str, version: int) -> bool:
         """
         Mount the tags for a model into memory
         """
         from ..helpers.logger import ComfyLogger
-        
+
         tags_path = os.path.join(cls().tags_basepath, f"{tags_name}.json")
         if cls.is_loaded(tags_name):
             ComfyLogger().log(f"Tags for model {tags_name} already loaded", "WARNING", True)
@@ -49,7 +49,7 @@ class JtpTagManager(metaclass=Singleton):
         if not os.path.exists(tags_path):
             ComfyLogger().log(f"Tags for model {tags_name} not found in path: {tags_path}", "ERROR", True)
             return False
-        
+
         # TODO: Add a check for the version of the tags file differs
         try:
             with open(tags_path, "r") as file:
@@ -63,28 +63,28 @@ class JtpTagManager(metaclass=Singleton):
         except Exception as err:
             ComfyLogger().log(f"Error loading tags for model {tags_name}: {err}", "ERROR", True)
             return False
-    
+
     @classmethod
     def unload(cls, tags_name: str) -> bool:
         """
         Unmount the tags for a model from memory
         """
         from ..helpers.logger import ComfyLogger
-        
+
         if not cls.is_loaded(tags_name):
             ComfyLogger().log(f"Tags for model {tags_name} not loaded, nothing to do here", "WARNING", True)
             return True
         ComfyCache.flush(f'tags.{tags_name}')
         gc.collect()
         return True
-    
+
     @classmethod
     def is_installed(cls, tags_name: str) -> bool:
         """
         Check if a tags file is installed in a directory
         """
         return any(tags_name + ".json" in s for s in cls.list_installed())
-    
+
     @classmethod
     def list_installed(cls) -> List[str]:
         """
@@ -99,7 +99,7 @@ class JtpTagManager(metaclass=Singleton):
         tags = list(filter(
             lambda x: x.endswith(".json"), os.listdir(tags_path)))
         return tags
-    
+
     @classmethod
     def download(cls, tags_name: str) -> bool:
         """
@@ -108,7 +108,7 @@ class JtpTagManager(metaclass=Singleton):
         from ..helpers.http import ComfyHTTP
         from ..helpers.config import ComfyExtensionConfig
         from ..helpers.logger import ComfyLogger
-        
+
         config = ComfyExtensionConfig().get()
         hf_endpoint: str = config["huggingface_endpoint"]
         if not hf_endpoint.startswith("https://"):
@@ -116,14 +116,14 @@ class JtpTagManager(metaclass=Singleton):
         if hf_endpoint.endswith("/"):
             hf_endpoint = hf_endpoint.rstrip("/")
         tags_path = os.path.join(cls().tags_basepath, f"{tags_name}.json")
-        
+
         url: str = ComfyExtensionConfig().get(property=f"tags.{tags_name}.url")
         url = url.replace("{HF_ENDPOINT}", hf_endpoint)
         if not url.endswith("/"):
             url += "/"
         if not url.endswith(".json"):
             url += f"tags.json"
-        
+
         ComfyLogger().log(f"Downloading tags {tags_name} from {url}", "INFO", True)
         with aiohttp.ClientSession() as session:
             try:

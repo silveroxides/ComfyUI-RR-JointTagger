@@ -25,7 +25,7 @@ tags_basepath = os.path.join(model_basepath, "tags")
 class ModelDevice(Enum):
     CPU = "cpu"
     GPU = "cuda"
-    
+
     def to_torch_device(self) -> torch.device:
         return torch.device(self.value)
 
@@ -193,10 +193,10 @@ class RRJointTagger(ComfyNodeABC):
         model_name = ComfyExtensionConfig().get_model_from_name(model)
         tags_name = ComfyExtensionConfig().get_tags_from_name(model)
         device_type = comfy.model_management.get_torch_device()
-        
+
         # Set the seed for reproducibility if needed, though inference is deterministic
         torch.manual_seed(seed)
-        
+
         tensor: np.ndarray = image * 255
         tensor = np.array(tensor, dtype=np.uint8)
         pbar = comfy.utils.ProgressBar(tensor.shape[0])
