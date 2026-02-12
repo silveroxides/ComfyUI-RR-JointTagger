@@ -1,5 +1,6 @@
 import gc
 import os
+import traceback
 from typing import Callable, List, Optional, Union
 from aiohttp import web
 import aiohttp
@@ -174,7 +175,10 @@ class JtpModelManager(metaclass=Singleton):
             try:
                 ComfyHTTP().download_to_file(url=url, destination=model_path, update_callback=cls().download_progress_callback, session=session)
             except aiohttp.client_exceptions.ClientConnectorError as err:
-                ComfyLogger().log(message="Unable to download model. Download files manually or try using a HF mirror/proxy in your config.json", type="ERROR", always=True)
+                ComfyLogger().log(message=f"Unable to download model. Download files manually or try using a HF mirror/proxy in your config.json: {err}\n{traceback.format_exc()}", type="ERROR", always=True)
+                return False
+            except Exception as err:
+                ComfyLogger().log(message=f"Error downloading model: {err}\n{traceback.format_exc()}", type="ERROR", always=True)
                 return False
             cls().download_complete_callback(model_name)
         return True

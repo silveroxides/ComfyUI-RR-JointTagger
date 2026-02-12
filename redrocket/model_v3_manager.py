@@ -1,5 +1,6 @@
 import gc
 import os
+import traceback
 from typing import Callable, List, Optional, Union, Tuple, Dict, Any
 import requests
 import torch
@@ -129,7 +130,7 @@ class JtpModelV3Manager(metaclass=Singleton):
             return True, tags
 
         except Exception as e:
-            ComfyLogger().log(message=f"Error loading model {model_name}: {e}", type="ERROR", always=True)
+            ComfyLogger().log(message=f"Error loading model {model_name}: {e}\n{traceback.format_exc()}", type="ERROR", always=True)
             return False, []
 
     @classmethod
@@ -194,5 +195,5 @@ class JtpModelV3Manager(metaclass=Singleton):
             cls().download_complete_callback(model_name)
             return True
         except Exception as err:
-            ComfyLogger().log(message=f"Unable to download model: {err}", type="ERROR", always=True)
+            ComfyLogger().log(message=f"Unable to download model: {err}\n{traceback.format_exc()}", type="ERROR", always=True)
             return False

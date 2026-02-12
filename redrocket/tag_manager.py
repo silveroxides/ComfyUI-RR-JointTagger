@@ -1,5 +1,6 @@
 import gc
 import os
+import traceback
 from typing import Callable, Dict, List, Optional, Tuple, Union
 from aiohttp import web
 import aiohttp
@@ -61,7 +62,7 @@ class JtpTagManager(metaclass=Singleton):
             ComfyLogger().log(f"Loaded {count} tags for model {tags_name}", "INFO", True)
             return True
         except Exception as err:
-            ComfyLogger().log(f"Error loading tags for model {tags_name}: {err}", "ERROR", True)
+            ComfyLogger().log(f"Error loading tags for model {tags_name}: {err}\n{traceback.format_exc()}", "ERROR", True)
             return False
 
     @classmethod
@@ -129,7 +130,10 @@ class JtpTagManager(metaclass=Singleton):
             try:
                 ComfyHTTP().download_to_file(f"{url}", tags_path, cls().download_progress_callback, session=session)
             except aiohttp.client_exceptions.ClientConnectorError as err:
-                ComfyLogger().log("Unable to download tags. Download files manually or try using a HF mirror/proxy in your config.json", "ERROR", True)
+                ComfyLogger().log(f"Unable to download tags. Download files manually or try using a HF mirror/proxy in your config.json: {err}\n{traceback.format_exc()}", "ERROR", True)
+                return False
+            except Exception as err:
+                ComfyLogger().log(f"Error downloading tags: {err}\n{traceback.format_exc()}", "ERROR", True)
                 return False
             cls().download_complete_callback(tags_name)
         return True

@@ -1,5 +1,6 @@
 import gc
 import os
+import traceback
 from typing import Callable, List, Optional, Union, Tuple, Dict, Any, Set
 import requests
 import csv
@@ -71,7 +72,7 @@ class JtpTagV3Manager(metaclass=Singleton):
             ComfyCache.set(f'tags_v3.{model_name}', metadata)
             return True
         except Exception as e:
-            ComfyLogger().log(f"Error loading tags: {e}", "ERROR", True)
+            ComfyLogger().log(f"Error loading tags: {e}\n{traceback.format_exc()}", "ERROR", True)
             return False
 
     @classmethod
@@ -141,7 +142,7 @@ class JtpTagV3Manager(metaclass=Singleton):
                 if cls().download_complete_callback:
                     cls().download_complete_callback(fname)
             except Exception as e:
-                ComfyLogger().log(f"Failed to download {fname}: {e}", "ERROR", True)
+                ComfyLogger().log(f"Failed to download {fname}: {e}\n{traceback.format_exc()}", "ERROR", True)
                 return False
         return True
 

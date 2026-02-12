@@ -1,4 +1,5 @@
 import os
+import traceback
 
 from .metaclasses import Singleton
 
@@ -22,7 +23,7 @@ class ComfyFiles(metaclass=Singleton):
                 ComfyLogger().log(f"Created junction from {src} to {dst}")
                 return True
             except Exception as e:
-                ComfyLogger().log(f"Failed to create junction from {src} to {dst}\nException: {e}", type="ERROR", always=True)
+                ComfyLogger().log(f"Failed to create junction from {src} to {dst}\nException: {e}\n{traceback.format_exc()}", type="ERROR", always=True)
                 return False
         else:
             try:
@@ -30,7 +31,7 @@ class ComfyFiles(metaclass=Singleton):
                 ComfyLogger().log(f"Created symlink from {src} to {dst}")
                 return True
             except Exception as e:
-                ComfyLogger.log(f"Failed to create symlink from {src} to {dst}\nException: {e}", type="ERROR", always=True)
+                ComfyLogger().log(f"Failed to create symlink from {src} to {dst}\nException: {e}\n{traceback.format_exc()}", type="ERROR", always=True)
                 return False
 
     @classmethod
@@ -45,5 +46,5 @@ class ComfyFiles(metaclass=Singleton):
             else:
                 return False
         except Exception as e:
-            ComfyLogger().log(f"Failed to read link from {path}\nException: {e}", type="ERROR", always=True)
+            ComfyLogger().log(f"Failed to read link from {path}\nException: {e}\n{traceback.format_exc()}", type="ERROR", always=True)
             return False

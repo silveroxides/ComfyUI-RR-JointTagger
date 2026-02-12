@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Optional
 
 from .metaclasses import Singleton
@@ -7,14 +8,34 @@ from .metaclasses import Singleton
 
 class ComfyLogger(metaclass=Singleton):
     """
-    A simple logger class for comfy extensions that logs to stdout.
+    A simple logger class for comfy extensions that logs to stdout and a file.
     """
     def __init__(self) -> None:
         from .config import ComfyExtensionConfig
-        name = ComfyExtensionConfig().get()["name"]
+        from .extension import ComfyExtension
+        config = ComfyExtensionConfig().get()
+        name = config["name"]
         self.logger = logging.getLogger(f"{name}")
         self.logger.setLevel(self.log_level())
+
+        # Stream Handler for console output
         self.logger.addHandler(logging.StreamHandler())
+
+        # File Handler for logging to a file
+        if self.is_logging_enabled():
+            try:
+                log_dir = ComfyExtension.extension_dir("logs")
+                # Ensure the logs directory exists
+                if not os.path.exists(log_dir):
+                    os.makedirs(log_dir, exist_ok=True)
+
+                log_file = os.path.join(log_dir, "ComfyUI-RR-JointTagger.log")
+                file_handler = logging.FileHandler(log_file, encoding='utf-8')
+                file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+                self.logger.addHandler(file_handler)
+            except Exception as e:
+                print(f"Failed to setup file logging: {e}")
+
         self.logger.propagate = False
 
     @classmethod
