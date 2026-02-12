@@ -76,6 +76,10 @@ class JtpTagV3Manager(metaclass=Singleton):
 
     @classmethod
     def download(cls, model_name: str) -> bool:
+        # Create tags directory if it doesn't exist
+        if not os.path.exists(cls().tags_basepath):
+            os.makedirs(cls().tags_basepath, exist_ok=True)
+
         config = ComfyExtensionConfig().get()
         hf_endpoint: str = config["huggingface_endpoint"]
         if not hf_endpoint.startswith("https://"):
@@ -98,15 +102,23 @@ class JtpTagV3Manager(metaclass=Singleton):
         # User said: "jtp-3-hydra-tags.csv" and "jtp-3-hydra-val.csv" are in that folder.
         # If our model key is "jtp-3-hydra", we can infer the filename.
         
-        files_to_download = [f"{model_name}-tags.csv"] # We assume the key matches the file prefix
+        # For JTP-3, we need to download both tags and val CSVs
+        # The URL structure is data_url/filename
+        files_to_download = [f"{model_name}-tags.csv", f"{model_name}-val.csv"]
         
         for fname in files_to_download:
             url = f"{data_url}{fname}"
             dest = os.path.join(cls().tags_basepath, fname)
+            
+            # If file already exists, maybe skip? For now, we overwrite or redownload.
+            # But let's check if we can download it.
+            
             try:
                 ComfyLogger().log(f"Downloading {fname} from {url}", "INFO", True)
                 response = requests.get(url, stream=True)
-                response.raise_for_status()
+                if response.status_code != 200:
+                     ComfyLogger().log(f"Failed to download {fname}: Status {response.status_code}", "ERROR", True)
+                     continue # Try next file? Or fail completely?
                 
                 total_size = int(response.headers.get('content-length', 0))
                 block_size = 1024
@@ -126,7 +138,8 @@ class JtpTagV3Manager(metaclass=Singleton):
                         if cls().download_progress_callback and total_size > 0:
                             cls().download_progress_callback(int(downloaded / total_size * 100), fname)
                             
-                cls().download_complete_callback(fname)
+                if cls().download_complete_callback:
+                    cls().download_complete_callback(fname)
             except Exception as e:
                 ComfyLogger().log(f"Failed to download {fname}: {e}", "ERROR", True)
                 return False

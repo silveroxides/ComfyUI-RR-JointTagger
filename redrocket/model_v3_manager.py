@@ -148,6 +148,9 @@ class JtpModelV3Manager(metaclass=Singleton):
     
     @classmethod
     def download(cls, model_name: str) -> bool:
+        # Create model directory if it doesn't exist
+        os.makedirs(cls().model_basepath, exist_ok=True)
+        
         config = ComfyExtensionConfig().get()
         hf_endpoint: str = config["huggingface_endpoint"]
         if not hf_endpoint.startswith("https://"):
