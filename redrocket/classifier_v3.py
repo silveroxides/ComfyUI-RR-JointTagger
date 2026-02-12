@@ -188,7 +188,7 @@ class JtpInferenceV3(metaclass=Singleton):
                     try:
                         target_idx = tags.index(top_tag_raw)
                     except ValueError:
-                        pass
+                        ComfyLogger().log(f"Auto CAM: '{top_tag_raw}' found in tags list but index retrieval failed.", "WARNING")
                 
                 # Fallback to raw model top 1 if filtering removed everything but auto was requested?
                 # Or if process_tags returned nothing.
@@ -214,8 +214,10 @@ class JtpInferenceV3(metaclass=Singleton):
                         cam_tag_norm = clean_tag.replace(" ", "_")
                         if cam_tag_norm in tags:
                             target_idx = tags.index(cam_tag_norm)
+                        else:
+                            ComfyLogger().log(f"CAM Tag '{cam_tag}' (normalized: '{cam_tag_norm}') not found in model tags.", "WARNING")
                 except ValueError:
-                    pass
+                    ComfyLogger().log(f"CAM Tag '{cam_tag}' caused a ValueError during lookup.", "WARNING")
             
             if target_idx >= 0:
                 # Need original PIL image for composite
