@@ -46,5 +46,12 @@
 			"data_url": "{HF_ENDPOINT}/RedRocket/JTP-3/resolve/main/data",
 			"version": "3"
 		}
+	},
+	"models_dino": {
+		"tagger-proto": {
+			"name": "DINOv3 Tagger Proto",
+			"url": "{HF_ENDPOINT}/lodestones/tagger-experiment/resolve/main/tagger_proto.safetensors",
+			"vocab_url": "{HF_ENDPOINT}/lodestones/tagger-experiment/resolve/main/tagger_vocab.json"
+		}
 	}
 }
