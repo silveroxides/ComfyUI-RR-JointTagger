@@ -2,14 +2,13 @@ import gc
 import os
 import traceback
 from typing import Callable, List, Optional, Union
-from aiohttp import web
-import aiohttp
+import requests
 import torch
 import timm
 import safetensors.torch
+from tqdm import tqdm
 
 from ..helpers.cache import CacheCleanupMethod, ComfyCache
-from ..helpers.http import ComfyHTTP
 from ..helpers.config import ComfyExtensionConfig
 from ..helpers.logger import ComfyLogger
 from ..helpers.metaclasses import Singleton
@@ -154,6 +153,8 @@ class JtpModelManager(metaclass=Singleton):
         """
         Download a RedRocket JTP Vision Transformer model from a URL
         """
+        os.makedirs(cls().model_basepath, exist_ok=True)
+
         config = ComfyExtensionConfig().get()
         hf_endpoint: str = config["huggingface_endpoint"]
         if not hf_endpoint.startswith("https://"):
@@ -171,14 +172,36 @@ class JtpModelManager(metaclass=Singleton):
             url += f"{model_name}.safetensors"
 
         ComfyLogger().log(message=f"Downloading model {model_name} from {url}", type="INFO", always=True)
-        with aiohttp.ClientSession() as session:
-            try:
-                ComfyHTTP().download_to_file(url=url, destination=model_path, update_callback=cls().download_progress_callback, session=session)
-            except aiohttp.client_exceptions.ClientConnectorError as err:
-                ComfyLogger().log(message=f"Unable to download model. Download files manually or try using a HF mirror/proxy in your config.json: {err}\n{traceback.format_exc()}", type="ERROR", always=True)
-                return False
-            except Exception as err:
-                ComfyLogger().log(message=f"Error downloading model: {err}\n{traceback.format_exc()}", type="ERROR", always=True)
-                return False
-            cls().download_complete_callback(model_name)
-        return True
+        try:
+            response = requests.get(url, stream=True)
+            response.raise_for_status()
+
+            total_size = int(response.headers.get("content-length", 0))
+            block_size = 1024
+
+            with open(model_path, "wb") as f, tqdm(
+                desc=model_name,
+                total=total_size,
+                unit="iB",
+                unit_scale=True,
+                unit_divisor=1024,
+            ) as bar:
+                downloaded = 0
+                for data in response.iter_content(block_size):
+                    f.write(data)
+                    bar.update(len(data))
+                    downloaded += len(data)
+                    if cls().download_progress_callback and total_size > 0:
+                        cls().download_progress_callback(
+                            int(downloaded / total_size * 100), model_name,
+                        )
+
+            if cls().download_complete_callback:
+                cls().download_complete_callback(model_name)
+            return True
+        except Exception as err:
+            ComfyLogger().log(
+                message=f"Unable to download model. Download files manually or try using a HF mirror/proxy in your config.json: {err}\n{traceback.format_exc()}",
+                type="ERROR", always=True,
+            )
+            return False
