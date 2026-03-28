@@ -4,10 +4,9 @@ import traceback
 from typing import Callable, List, Optional, Union, Tuple, Dict, Any
 import requests
 import torch
-import timm
 import safetensors.torch
 from safetensors import safe_open
-from torch.nn import Identity
+from torch.nn import Identity, Linear
 from tqdm import tqdm
 
 from ..helpers.cache import CacheCleanupMethod, ComfyCache
@@ -16,28 +15,7 @@ from ..helpers.logger import ComfyLogger
 from ..helpers.metaclasses import Singleton
 
 from .hydra_pool import HydraPool
-
-def sdpa_attn_mask(
-    patch_valid: torch.Tensor,
-    num_prefix_tokens: int = 0,
-    symmetric: bool = True,
-    q_len: int | None = None,
-    dtype: torch.dtype | None = None,
-) -> torch.Tensor:
-    mask = patch_valid.unflatten(-1, (1, 1, -1))
-
-    if num_prefix_tokens:
-        mask = torch.cat((
-            torch.ones(
-                *mask.shape[:-1], num_prefix_tokens,
-                device=patch_valid.device, dtype=torch.bool
-            ), mask
-        ), dim=-1)
-
-    return mask
-
-# Patch timm for NaFlex
-timm.models.naflexvit.create_attention_mask = sdpa_attn_mask
+from .siglip2 import NaFlexVit
 
 class JtpModelV3Manager(metaclass=Singleton):
     """
@@ -84,19 +62,18 @@ class JtpModelV3Manager(metaclass=Singleton):
 
             tags = metadata["classifier.labels"].split("\n")
 
-            model = timm.create_model(
-                'naflexvit_so400m_patch16_siglip',
-                pretrained=False, num_classes=0,
-                pos_embed_interp_mode="bilinear",
-                weight_init="skip", fix_init=False,
+            model = NaFlexVit(
+                num_classes=0,
                 device="cpu", dtype=torch.bfloat16,
             )
 
             variant = arch[31:]
             if variant == "": # vanilla
-                model.reset_classifier(len(tags))
+                model.num_classes = len(tags)
+                model.head = Linear(1152, len(tags), device="cpu", dtype=torch.bfloat16)
             elif variant == "+rr_slim":
-                model.reset_classifier(len(tags))
+                model.num_classes = len(tags)
+                model.head = Linear(1152, len(tags), device="cpu", dtype=torch.bfloat16)
                 if "attn_pool.q.weight" not in state_dict:
                     model.attn_pool.q = Identity()
                 if "head.bias" not in state_dict:
