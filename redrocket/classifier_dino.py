@@ -43,8 +43,10 @@ class DINOv3Inference(metaclass=Singleton):
         topk: int = 40,
         threshold: float = 0.35,
         max_size: int = 1024,
+        implications_mode: str = "off",
         exclude_tags: str = "",
-        replace_underscore: bool = True,
+        exclude_categories: str = "",
+        max_tags: int = 0,
         trailing_comma: bool = False,
         prefix: str = "",
         seed: int = 0,
@@ -64,13 +66,17 @@ class DINOv3Inference(metaclass=Singleton):
         topk:
             Number of top tags to return when *mode* is ``"topk"``.
         threshold:
-            Minimum score to include when *mode* is ``"threshold"``.
+            Minimum score to include.
         max_size:
             Long-edge pixel cap (snapped to 16px multiples).
+        implications_mode:
+            How to handle implied tags: ``"inherit"``, ``"constrain"``,
+            ``"remove"``, ``"constrain-remove"``, or ``"off"``.
         exclude_tags:
             Comma-separated tags to exclude from the output.
-        replace_underscore:
-            Replace underscores with spaces in output tags.
+        exclude_categories:
+            Comma-separated category names to exclude
+            (e.g. ``"copyright, character, meta"``).
         trailing_comma:
             Append a trailing comma to the output tag string.
         prefix:
@@ -85,8 +91,8 @@ class DINOv3Inference(metaclass=Singleton):
         # Build a params hash for caching
         params_string = (
             f"{model_name}|{mode}|{topk}|{threshold}|{max_size}|"
-            f"{exclude_tags}|{replace_underscore}|{trailing_comma}|"
-            f"{prefix}|{seed}"
+            f"{implications_mode}|{exclude_tags}|{exclude_categories}|"
+            f"{max_tags}|{trailing_comma}|{prefix}|{seed}"
         )
         params_key = hashlib.sha256(params_string.encode()).hexdigest()
 
@@ -111,6 +117,15 @@ class DINOv3Inference(metaclass=Singleton):
         if not idx2tag or num_tags == 0:
             ComfyLogger().log("DINOv3: vocab is empty", "ERROR", True)
             return "", {}
+
+        # Load tag metadata (implications/categories) if needed and available
+        if implications_mode != "off" and not DINOv3TagManager.has_metadata(model_name):
+            csv_path = os.path.join(
+                DINOv3TagManager().tags_basepath, f"{model_name}-tags.csv",
+            )
+            if not os.path.exists(csv_path):
+                DINOv3TagManager.download_metadata(model_name)
+            DINOv3TagManager.load_metadata(model_name)
 
         # ----------------------------------------------------------
         # 2. Ensure model is available
@@ -157,22 +172,27 @@ class DINOv3Inference(metaclass=Singleton):
         scores = torch.sigmoid(logits.float())
 
         # ----------------------------------------------------------
-        # 5. Top-K or threshold selection
+        # 5. Top-K + threshold selection (both always applied)
         # ----------------------------------------------------------
+        # Always apply threshold as a minimum score floor
+        mask = scores >= threshold
+        valid_indices = mask.nonzero(as_tuple=True)[0]
+        valid_values = scores[valid_indices]
+
+        # Sort descending
+        order = valid_values.argsort(descending=True)
+        valid_indices = valid_indices[order]
+        valid_values = valid_values[order]
+
+        # In topk mode, additionally cap the number of results
         if mode == "topk":
-            k = min(topk, num_tags)
-            values, indices = scores.topk(k)
-        else:
-            # Threshold mode
-            mask = scores >= threshold
-            indices = mask.nonzero(as_tuple=True)[0]
-            values = scores[indices]
-            order = values.argsort(descending=True)
-            indices, values = indices[order], values[order]
+            k = min(topk, len(valid_indices))
+            valid_indices = valid_indices[:k]
+            valid_values = valid_values[:k]
 
         raw_results: List[Tuple[str, float]] = [
             (idx2tag[i], float(v))
-            for i, v in zip(indices.tolist(), values.tolist())
+            for i, v in zip(valid_indices.tolist(), valid_values.tolist())
         ]
 
         # ----------------------------------------------------------
@@ -180,8 +200,12 @@ class DINOv3Inference(metaclass=Singleton):
         # ----------------------------------------------------------
         tag_string, scores_dict = DINOv3TagManager.process_tags(
             results=raw_results,
+            model_name=model_name,
+            implications_mode=implications_mode,
+            threshold=threshold,
+            max_tags=max_tags,
             exclude_tags=exclude_tags,
-            replace_underscore=replace_underscore,
+            exclude_categories=exclude_categories,
             trailing_comma=trailing_comma,
             prefix=prefix,
         )
