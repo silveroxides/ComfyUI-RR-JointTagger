@@ -1,17 +1,30 @@
+import csv
 import gc
 import os
 import traceback
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 from aiohttp import web
 import aiohttp
 import msgspec
+import requests
 import torch
+from tqdm import tqdm
 
 from ..helpers.cache import CacheCleanupMethod, ComfyCache
 from ..helpers.http import ComfyHTTP
 from ..helpers.config import ComfyExtensionConfig
 from ..helpers.logger import ComfyLogger
 from ..helpers.metaclasses import Singleton
+
+# Category IDs used in the JTP-3 tag CSV
+TAG_CATEGORIES = {
+    "general": 0,
+    "copyright": 3,
+    "character": 4,
+    "species": 5,
+    "meta": 7,
+    "lore": 8,
+}
 
 
 class JtpTagManager(metaclass=Singleton):
@@ -138,29 +151,352 @@ class JtpTagManager(metaclass=Singleton):
             cls().download_complete_callback(tags_name)
         return True
 
+    # ------------------------------------------------------------------
+    # Metadata (implications / categories from JTP-3 CSV)
+    # ------------------------------------------------------------------
+
     @classmethod
-    def process_tags(cls, tags_name: str, indices: Union[torch.Tensor, None], values: Union[torch.Tensor, None], exclude_tags: str, replace_underscore: bool, threshold: float, trailing_comma: bool) -> Tuple[str, Dict[str, float]]:
+    def has_metadata(cls, tags_name: str) -> bool:
+        """Check whether metadata (implications CSV) is loaded for *tags_name*."""
+        return ComfyCache.get(f'tags.{tags_name}.metadata') is not None
+
+    @classmethod
+    def load_metadata(cls, tags_name: str) -> bool:
+        """Load tag metadata (categories + implications) from a JTP-3-style CSV.
+
+        All tag keys and implication references are normalised to use spaces
+        instead of underscores to match V1/V2 in-memory tag format.
+        """
+        csv_path = os.path.join(cls().tags_basepath, f"{tags_name}-tags.csv")
+        if not os.path.exists(csv_path):
+            ComfyLogger().log(
+                f"Tag metadata CSV not found: {csv_path} "
+                "(implications will be unavailable)",
+                "WARNING", True,
+            )
+            return False
+
+        try:
+            metadata: Dict[str, Tuple[int, List[str]]] = {}
+            with open(csv_path, "r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    # Normalise tag: underscores -> spaces (V1 stores with spaces)
+                    tag = row["tag"].replace("_", " ")
+                    category = int(row.get("category", 0))
+                    raw_impl = row.get("implications", "")
+                    implications = [
+                        imp.replace("_", " ")
+                        for imp in raw_impl.split()
+                        if imp
+                    ]
+                    metadata[tag] = (category, implications)
+
+            ComfyCache.set(f'tags.{tags_name}.metadata', metadata)
+            ComfyLogger().log(
+                f"Tag metadata loaded: {len(metadata):,} entries for {tags_name}",
+                "INFO", True,
+            )
+            return True
+
+        except Exception as e:
+            ComfyLogger().log(
+                f"Error loading tag metadata: {e}\n{traceback.format_exc()}",
+                "ERROR", True,
+            )
+            return False
+
+    @classmethod
+    def download_metadata(cls, model_name: str) -> bool:
+        """Download tag metadata CSV from the configured ``data_url``.
+
+        The model_name here is the key used in config.json ``models`` section.
+        The CSV is saved as ``{tags_basepath}/{model_name}-tags.csv``.
+        """
+        os.makedirs(cls().tags_basepath, exist_ok=True)
+
+        config = ComfyExtensionConfig().get()
+        hf_endpoint: str = config.get("huggingface_endpoint", "https://huggingface.co")
+        if not hf_endpoint.startswith("https://"):
+            hf_endpoint = f"https://{hf_endpoint}"
+        hf_endpoint = hf_endpoint.rstrip("/")
+
+        data_url = ComfyExtensionConfig().get(
+            property=f"models.{model_name}.data_url",
+        )
+        if not data_url:
+            ComfyLogger().log(
+                f"No data_url for model {model_name} — "
+                "implications will not be available",
+                "WARNING", True,
+            )
+            return False
+        data_url = data_url.replace("{HF_ENDPOINT}", hf_endpoint)
+        if not data_url.endswith("/"):
+            data_url += "/"
+
+        tag_file = ComfyExtensionConfig().get(
+            property=f"models.{model_name}.data_tag_file",
+        )
+        if not tag_file or not isinstance(tag_file, str):
+            tag_file = "jtp-3-hydra-tags.csv"
+
+        url = f"{data_url}{tag_file}"
+        dest = os.path.join(cls().tags_basepath, f"{model_name}-tags.csv")
+
+        ComfyLogger().log(f"Downloading tag metadata from {url}", "INFO", True)
+
+        try:
+            response = requests.get(url, stream=True)
+            if response.status_code != 200:
+                ComfyLogger().log(
+                    f"Failed to download tag metadata: HTTP {response.status_code}",
+                    "WARNING", True,
+                )
+                return False
+
+            total_size = int(response.headers.get("content-length", 0))
+            block_size = 1024
+
+            with open(dest, "wb") as f, tqdm(
+                desc=f"{model_name}-tags.csv",
+                total=total_size,
+                unit="iB",
+                unit_scale=True,
+                unit_divisor=1024,
+            ) as bar:
+                downloaded = 0
+                for chunk in response.iter_content(block_size):
+                    f.write(chunk)
+                    bar.update(len(chunk))
+                    downloaded += len(chunk)
+                    if cls().download_progress_callback and total_size > 0:
+                        cls().download_progress_callback(
+                            int(downloaded / total_size * 100),
+                            f"{model_name}-tags.csv",
+                        )
+
+            if cls().download_complete_callback:
+                cls().download_complete_callback(f"{model_name}-tags.csv")
+            return True
+
+        except Exception as e:
+            ComfyLogger().log(
+                f"Failed to download tag metadata: {e}\n{traceback.format_exc()}",
+                "WARNING", True,
+            )
+            return False
+
+    # ------------------------------------------------------------------
+    # Tag processing (with optional implications)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def process_tags(
+        cls,
+        tags_name: str,
+        indices: Union[torch.Tensor, None],
+        values: Union[torch.Tensor, None],
+        threshold: float,
+        exclude_tags: str = "",
+        replace_underscore: bool = True,
+        trailing_comma: bool = False,
+        implications_mode: str = "off",
+        exclude_categories: str = "",
+        prefix: str = "",
+    ) -> Tuple[str, Dict[str, float]]:
+        """Process raw model output into a formatted tag string and scores dict.
+
+        Parameters
+        ----------
+        tags_name:
+            Cache key for the loaded tag vocabulary.
+        indices, values:
+            Top-k indices and values from the model output.
+        threshold:
+            Minimum score floor — also re-applied after implications.
+        exclude_tags:
+            Comma-separated tags to exclude.
+        replace_underscore:
+            If True tags are returned with spaces; if False with underscores.
+        trailing_comma:
+            Append a trailing comma to the tag string.
+        implications_mode:
+            ``"inherit"``, ``"constrain"``, ``"remove"``,
+            ``"constrain-remove"``, or ``"off"``.
+        exclude_categories:
+            Comma-separated category names to exclude
+            (e.g. ``"copyright, character, meta"``).
+        prefix:
+            Text to prepend to the tag string.
+        """
         from ..helpers.logger import ComfyLogger
-        corrected_excluded_tags = [tag.replace("_", " ").strip() for tag in exclude_tags.split(",") if not tag.isspace()]
-        print(corrected_excluded_tags)
-        tag_score = {}
+
+        tag_score: Dict[str, float] = {}
+
         if indices is None or indices.size(0) == 0:
-            ComfyLogger().log(message=f"No indicies found for model {tags_name}", type="WARNING", always=True)
+            ComfyLogger().log(
+                message=f"No indices found for model {tags_name}",
+                type="WARNING", always=True,
+            )
             return "", tag_score
+
         if values is None or values.size(0) == 0:
-            ComfyLogger().log(message=f"No values found for model {tags_name}", type="WARNING", always=True)
+            ComfyLogger().log(
+                message=f"No values found for model {tags_name}",
+                type="WARNING", always=True,
+            )
             return "", tag_score
-        ComfyLogger().log(message=f"Processing {len(indices)}:{len(values)} tags for model {tags_name}", type="INFO", always=True)
+
+        ComfyLogger().log(
+            message=f"Processing {len(indices)}:{len(values)} tags for model {tags_name}",
+            type="INFO", always=True,
+        )
+
         tags_data: Union[Dict[str, float], None] = ComfyCache.get(f'tags.{tags_name}.tags')
         if tags_data is None or len(tags_data) == 0:
-            ComfyLogger().log(message=f"Tags data for {tags_name} not found in cache", type="ERROR", always=True)
+            ComfyLogger().log(
+                message=f"Tags data for {tags_name} not found in cache",
+                type="ERROR", always=True,
+            )
             return "", tag_score
+
+        # Build labels dict from top-k.
+        # V1 JSON tags have underscores, V2 has spaces — normalise all to
+        # spaces so they match the metadata (also normalised to spaces).
         for i in range(indices.size(0)):
-            tag = [key for key, value in tags_data.items() if value == indices[i].item()][0]
-            if tag not in corrected_excluded_tags:
-                tag_score[tag] = values[i].item()
-        if not replace_underscore:
-            tag_score = {key.replace(" ", "_"): value for key, value in tag_score.items()}
-        tag_score = dict(sorted(tag_score.items(), key=lambda item: item[1], reverse=True))
-        tag_score = {key: value for key, value in tag_score.items() if value > threshold}
-        return ", ".join(tag_score.keys()) + ("," if trailing_comma else ""), tag_score
+            raw_tag = [key for key, value in tags_data.items() if value == indices[i].item()][0]
+            tag = raw_tag.replace("_", " ")
+            tag_score[tag] = values[i].item()
+
+        # Apply initial threshold
+        labels: Dict[str, float] = {
+            tag: score for tag, score in tag_score.items() if score > threshold
+        }
+
+        # --- Implications processing (only if metadata is available) ---
+        metadata = ComfyCache.get(f'tags.{tags_name}.metadata')
+
+        if metadata and implications_mode != "off":
+            def inherit_implications(lbls: Dict[str, float], antecedent: str) -> None:
+                if antecedent not in metadata:
+                    return
+                p = lbls.get(antecedent, 0.0)
+                for consequent in metadata[antecedent][1]:
+                    if lbls.get(consequent, 0.0) < p:
+                        lbls[consequent] = p
+                    inherit_implications(lbls, consequent)
+
+            def constrain_implications(
+                lbls: Dict[str, float], antecedent: str, _target: Optional[str] = None,
+            ) -> None:
+                if _target is None:
+                    _target = antecedent
+                if antecedent not in metadata:
+                    return
+                for consequent in metadata[antecedent][1]:
+                    p = lbls.get(consequent, 0.0)
+                    if lbls.get(_target, 0.0) > p:
+                        lbls[_target] = p
+                    constrain_implications(lbls, consequent, _target=_target)
+
+            def remove_implications(lbls: Dict[str, float], antecedent: str) -> None:
+                if antecedent not in metadata:
+                    return
+                for consequent in metadata[antecedent][1]:
+                    lbls.pop(consequent, None)
+                    remove_implications(lbls, consequent)
+
+            tag_keys = list(labels.keys())
+
+            if implications_mode == "inherit":
+                for tag in tag_keys:
+                    inherit_implications(labels, tag)
+            elif implications_mode in ("constrain", "constrain-remove"):
+                for tag in tag_keys:
+                    constrain_implications(labels, tag)
+
+        # --- Filtering ---
+
+        # Build exclusion set (normalised to spaces for matching)
+        excluded: Set[str] = set()
+        if exclude_tags:
+            for t in exclude_tags.split(","):
+                t = t.strip()
+                if t:
+                    excluded.add(t.replace("_", " "))
+
+        # Parse excluded categories
+        excluded_cats: Set[int] = set()
+        if exclude_categories and metadata:
+            for cat in exclude_categories.split(","):
+                cat = cat.strip().lower()
+                if cat in TAG_CATEGORIES:
+                    excluded_cats.add(TAG_CATEGORIES[cat])
+
+        # Re-apply threshold after implications + apply exclusions
+        filtered: Dict[str, float] = {}
+        for tag, prob in labels.items():
+            # Threshold (catches scores lowered by constrain)
+            if prob <= threshold:
+                continue
+
+            # Exclude by tag name
+            if tag in excluded:
+                continue
+
+            # Exclude by category
+            if excluded_cats and metadata and tag in metadata:
+                cat_id = metadata[tag][0]
+                if cat_id in excluded_cats:
+                    continue
+
+            filtered[tag] = prob
+
+        # --- Remove implications step (after filtering) ---
+        if metadata and implications_mode in ("remove", "constrain-remove"):
+            keys_to_check = list(filtered.keys())
+            for tag in keys_to_check:
+                if tag in filtered and tag in metadata:
+                    for consequent in metadata[tag][1]:
+                        filtered.pop(consequent, None)
+                        cls._remove_implications_recursive(filtered, consequent, metadata)
+
+        # --- Format output ---
+        sorted_items = sorted(filtered.items(), key=lambda x: x[1], reverse=True)
+
+        tag_list: List[str] = []
+        scores_dict: Dict[str, float] = {}
+
+        for tag, score in sorted_items:
+            scores_dict[tag] = score
+            display_tag = tag
+            if not replace_underscore:
+                display_tag = display_tag.replace(" ", "_")
+            tag_list.append(display_tag)
+
+        # Prefix handling
+        if prefix:
+            prefix_val = prefix.strip()
+            if prefix_val:
+                if prefix_val in tag_list:
+                    tag_list.remove(prefix_val)
+                tag_list.insert(0, prefix_val)
+
+        tag_string = ", ".join(tag_list)
+        if trailing_comma and tag_string:
+            tag_string += ","
+
+        return tag_string, scores_dict
+
+    @staticmethod
+    def _remove_implications_recursive(
+        labels: Dict[str, float],
+        antecedent: str,
+        metadata: Dict[str, Tuple[int, List[str]]],
+    ) -> None:
+        if antecedent not in metadata:
+            return
+        for consequent in metadata[antecedent][1]:
+            labels.pop(consequent, None)
+            JtpTagManager._remove_implications_recursive(labels, consequent, metadata)

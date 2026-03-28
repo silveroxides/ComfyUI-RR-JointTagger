@@ -29,11 +29,11 @@ class ModelDevice(Enum):
     def to_torch_device(self) -> torch.device:
         return torch.device(self.value)
 
-def classify_tags(image: Image.Image, model_name: str, tags_name: str, device: comfy.model_management.get_torch_device(), steps: float = 0.35, threshold: float = 0.35, exclude_tags: str = "", replace_underscore: bool = True, trailing_comma: bool = False) -> Tuple[str, Dict[str, float]]:
+def classify_tags(image: Image.Image, model_name: str, tags_name: str, device: comfy.model_management.get_torch_device(), steps: float = 0.35, threshold: float = 0.35, exclude_tags: str = "", replace_underscore: bool = True, trailing_comma: bool = False, implications_mode: str = "off", exclude_categories: str = "", prefix: str = "") -> Tuple[str, Dict[str, float]]:
     """
     Classify e621 tags for an image using RedRocket JTP Vision Transformer model
     """
-    tag_string, tag_scores = JtpInference().run_classifier(model_name=model_name, device=device, tags_name=tags_name, image=image, steps=steps, threshold=threshold, exclude_tags=exclude_tags, replace_underscore=replace_underscore, trailing_comma=trailing_comma)
+    tag_string, tag_scores = JtpInference().run_classifier(model_name=model_name, device=device, tags_name=tags_name, image=image, steps=steps, threshold=threshold, exclude_tags=exclude_tags, replace_underscore=replace_underscore, trailing_comma=trailing_comma, implications_mode=implications_mode, exclude_categories=exclude_categories, prefix=prefix)
     return tag_string, tag_scores
 
 
@@ -176,9 +176,12 @@ class RRJointTagger(ComfyNodeABC):
             "model": (models, {"default": ComfyExtensionConfig().get(property="rrtagger_settings.model")}),
             "steps": (IO.INT, {"default": 255, "min": 1, "max": 500, "display": "slider"}),
             "threshold": (IO.FLOAT, {"default": 0.35, "min": 0.0, "max": 1.0, "step": 0.05, "display": "slider"}),
-            "replace_underscore": (IO.BOOLEAN, {"default": False}),
-            "trailing_comma": (IO.BOOLEAN, {"default": False}),
-            "exclude_tags": (IO.STRING, {"multiline": True, "tooltip": "Tags to exclude from output."}),
+            "implications_mode": (["inherit", "constrain", "remove", "constrain-remove", "off"], {"default": "off", "tooltip": "How to handle implied tags (e.g. if 'cat' is present, 'feline' is implied). Requires JTP-3 metadata CSV."}),
+            "exclude_tags": (IO.STRING, {"multiline": True, "tooltip": "Comma separated tags to exclude from output."}),
+            "exclude_categories": (IO.STRING, {"multiline": True, "tooltip": "Comma separated categories to exclude (e.g. copyright, character, species, meta, lore)."}),
+            "prefix": (IO.STRING, {"default": "", "tooltip": "Text to prepend to the tags output."}),
+            "replace_underscore": (IO.BOOLEAN, {"default": True, "tooltip": "Replace underscores with spaces in tags."}),
+            "trailing_comma": (IO.BOOLEAN, {"default": False, "tooltip": "Add a trailing comma to the tag string."}),
             "seed": (IO.INT, {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
         }}
 
@@ -189,7 +192,10 @@ class RRJointTagger(ComfyNodeABC):
     OUTPUT_NODE: bool = True
     CATEGORY: str = "🐺 Furry Diffusion"
 
-    def tag(self, image: Image.Image, model: str, steps: int, threshold: float, seed: int, exclude_tags: str = "", replace_underscore: bool = False, trailing_comma: bool = False) -> Dict[str, Any]:
+    def tag(self, image: Image.Image, model: str, steps: int, threshold: float, seed: int,
+            exclude_tags: str = "", exclude_categories: str = "", prefix: str = "",
+            replace_underscore: bool = True, trailing_comma: bool = False,
+            implications_mode: str = "off") -> Dict[str, Any]:
         model_name = ComfyExtensionConfig().get_model_from_name(model)
         tags_name = ComfyExtensionConfig().get_tags_from_name(model)
         device_type = comfy.model_management.get_torch_device()
@@ -204,16 +210,22 @@ class RRJointTagger(ComfyNodeABC):
         scores: List[Dict[str, float]] = []
         for i in range(tensor.shape[0]):
             img: Image.Image = Image.fromarray(tensor[i]).convert("RGBA")
-            tags_t, scores_t = classify_tags(image=img, model_name=model_name, tags_name=tags_name, device=comfy.model_management.get_torch_device(), threshold=threshold,
-                        exclude_tags=exclude_tags, replace_underscore=replace_underscore, trailing_comma=trailing_comma)
-            print(f"tags_t={tags_t}")
-            final_tags = filter_tags(tags_t, exclude_tags)
-            tags.append(final_tags)
-            print(f"tags={tags}")
+            tags_t, scores_t = classify_tags(
+                image=img,
+                model_name=model_name,
+                tags_name=tags_name,
+                device=comfy.model_management.get_torch_device(),
+                threshold=threshold,
+                exclude_tags=exclude_tags,
+                replace_underscore=replace_underscore,
+                trailing_comma=trailing_comma,
+                implications_mode=implications_mode,
+                exclude_categories=exclude_categories,
+                prefix=prefix,
+            )
+            tags.append(tags_t)
             scores.append(scores_t)
             pbar.update(1)
-            print(f"exclude_tags={exclude_tags}")
-            # tags = [tag for tag in tags if tag[0] not in remove]
         return {"ui": {"tags": tags, "scores": scores}, "result": (tags, scores,)}
 
 JtpModelManager(model_basepath=model_basepath, download_progress_callback=download_progress_callback, download_complete_callback=download_complete_callback)

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from PIL import Image
 import numpy as np
@@ -20,7 +21,21 @@ class JtpInference(metaclass=Singleton):
         self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     @classmethod
-    def run_classifier(cls, model_name: str, tags_name: str, device: torch.device, image: Union[Image.Image, np.ndarray, Path], steps: float, threshold: float, exclude_tags: str = "", replace_underscore: bool = True, trailing_comma: bool = False) -> Tuple[str, Dict[str, float]]:
+    def run_classifier(
+        cls,
+        model_name: str,
+        tags_name: str,
+        device: torch.device,
+        image: Union[Image.Image, np.ndarray, Path],
+        steps: float,
+        threshold: float,
+        exclude_tags: str = "",
+        replace_underscore: bool = True,
+        trailing_comma: bool = False,
+        implications_mode: str = "off",
+        exclude_categories: str = "",
+        prefix: str = "",
+    ) -> Tuple[str, Dict[str, float]]:
         from ..helpers.logger import ComfyLogger
 
         model_version: int = ComfyCache.get(f'config.models.{model_name}.version')
@@ -44,13 +59,19 @@ class JtpInference(metaclass=Singleton):
             if not JtpTagManager().load(tags_name=tags_name, version=tags_version):
                 ComfyLogger().log(f"Tags {tags_name} could not be loaded", "ERROR", True)
                 return "", {}
-        # if cls().device != device:
-        #     JtpModelManager().switch_device(model_name, device)
-        #     cls().device = device
+
+        # Load implications metadata if needed
+        if implications_mode != "off":
+            if not JtpTagManager().has_metadata(tags_name):
+                # Download CSV if not on disk yet
+                csv_path = os.path.join(JtpTagManager().tags_basepath, f"{tags_name}-tags.csv")
+                if not os.path.exists(csv_path):
+                    JtpTagManager().download_metadata(model_name)
+                JtpTagManager().load_metadata(tags_name)
 
         # Create a unique key for the parameters to handle caching correctly
         import hashlib
-        params_string = f"{model_name}|{tags_name}|{steps}|{threshold}|{exclude_tags}|{replace_underscore}|{trailing_comma}"
+        params_string = f"{model_name}|{tags_name}|{steps}|{threshold}|{exclude_tags}|{replace_underscore}|{trailing_comma}|{implications_mode}|{exclude_categories}|{prefix}"
         params_key = hashlib.sha256(params_string.encode()).hexdigest()
 
         tensor = JtpImageManager().load(image=image, device=device, params_key=params_key)
@@ -77,7 +98,18 @@ class JtpInference(metaclass=Singleton):
                 ComfyLogger().log(message=f"Model version {model_version} not supported", type="ERROR", always=True)
                 return "", {}
         ComfyLogger().log(message="Processing tags...", type="DEBUG", always=True)
-        tags_str, tag_scores = JtpTagManager().process_tags(tags_name=tags_name, values=values, indices=indices, threshold=threshold, exclude_tags=exclude_tags, replace_underscore=replace_underscore, trailing_comma=trailing_comma)
+        tags_str, tag_scores = JtpTagManager().process_tags(
+            tags_name=tags_name,
+            values=values,
+            indices=indices,
+            threshold=threshold,
+            exclude_tags=exclude_tags,
+            replace_underscore=replace_underscore,
+            trailing_comma=trailing_comma,
+            implications_mode=implications_mode,
+            exclude_categories=exclude_categories,
+            prefix=prefix,
+        )
         if not JtpImageManager().commit_cache(image=image, output=(tags_str, tag_scores), params_key=params_key):
             ComfyLogger().log(message="Image cache could not be committed", type="WARN", always=True)
             return tags_str, tag_scores
