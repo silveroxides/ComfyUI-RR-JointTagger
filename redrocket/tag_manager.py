@@ -3,15 +3,12 @@ import gc
 import os
 import traceback
 from typing import Callable, Dict, List, Optional, Set, Tuple, Union
-from aiohttp import web
-import aiohttp
 import msgspec
 import requests
 import torch
 from tqdm import tqdm
 
 from ..helpers.cache import CacheCleanupMethod, ComfyCache
-from ..helpers.http import ComfyHTTP
 from ..helpers.config import ComfyExtensionConfig
 from ..helpers.logger import ComfyLogger
 from ..helpers.metaclasses import Singleton
@@ -117,11 +114,9 @@ class JtpTagManager(metaclass=Singleton):
     @classmethod
     def download(cls, tags_name: str) -> bool:
         """
-        Load tags for a model from a URL and save them to a file.
+        Download tags for a model from a URL and save them to a file.
         """
-        from ..helpers.http import ComfyHTTP
-        from ..helpers.config import ComfyExtensionConfig
-        from ..helpers.logger import ComfyLogger
+        os.makedirs(cls().tags_basepath, exist_ok=True)
 
         config = ComfyExtensionConfig().get()
         hf_endpoint: str = config["huggingface_endpoint"]
@@ -139,17 +134,40 @@ class JtpTagManager(metaclass=Singleton):
             url += f"tags.json"
 
         ComfyLogger().log(f"Downloading tags {tags_name} from {url}", "INFO", True)
-        with aiohttp.ClientSession() as session:
-            try:
-                ComfyHTTP().download_to_file(f"{url}", tags_path, cls().download_progress_callback, session=session)
-            except aiohttp.client_exceptions.ClientConnectorError as err:
-                ComfyLogger().log(f"Unable to download tags. Download files manually or try using a HF mirror/proxy in your config.json: {err}\n{traceback.format_exc()}", "ERROR", True)
-                return False
-            except Exception as err:
-                ComfyLogger().log(f"Error downloading tags: {err}\n{traceback.format_exc()}", "ERROR", True)
-                return False
-            cls().download_complete_callback(tags_name)
-        return True
+        try:
+            response = requests.get(url, stream=True)
+            response.raise_for_status()
+
+            total_size = int(response.headers.get("content-length", 0))
+            block_size = 1024
+
+            with open(tags_path, "wb") as f, tqdm(
+                desc=f"{tags_name}.json",
+                total=total_size,
+                unit="iB",
+                unit_scale=True,
+                unit_divisor=1024,
+            ) as bar:
+                downloaded = 0
+                for chunk in response.iter_content(block_size):
+                    f.write(chunk)
+                    bar.update(len(chunk))
+                    downloaded += len(chunk)
+                    if cls().download_progress_callback and total_size > 0:
+                        cls().download_progress_callback(
+                            int(downloaded / total_size * 100),
+                            f"{tags_name}.json",
+                        )
+
+            if cls().download_complete_callback:
+                cls().download_complete_callback(tags_name)
+            return True
+        except Exception as err:
+            ComfyLogger().log(
+                f"Unable to download tags. Download files manually or try using a HF mirror/proxy in your config.json: {err}\n{traceback.format_exc()}",
+                "ERROR", True,
+            )
+            return False
 
     # ------------------------------------------------------------------
     # Metadata (implications / categories from JTP-3 CSV)

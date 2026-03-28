@@ -111,8 +111,10 @@ class JtpTagV3Manager(metaclass=Singleton):
             url = f"{data_url}{fname}"
             dest = os.path.join(cls().tags_basepath, fname)
 
-            # If file already exists, maybe skip? For now, we overwrite or redownload.
-            # But let's check if we can download it.
+            # Skip if file already exists on disk
+            if os.path.exists(dest):
+                ComfyLogger().log(f"{fname} already exists, skipping download", "INFO", True)
+                continue
 
             try:
                 ComfyLogger().log(f"Downloading {fname} from {url}", "INFO", True)
