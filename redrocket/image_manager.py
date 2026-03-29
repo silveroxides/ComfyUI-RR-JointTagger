@@ -235,9 +235,8 @@ class JtpImageManager(metaclass=Singleton):
             pad=None,
             background=0.5,
         )
-        tensor = transform(image_input).unsqueeze(0).to(device.type)
-        if torch.cuda.is_available() is True and device.type == "cuda":
-            tensor.cuda()
+        tensor = transform(image_input).unsqueeze(0).to(device)
+        if device.type == "cuda":
             if torch.cuda.get_device_capability()[0] >= 7:
                 tensor = tensor.to(dtype=torch.float16, memory_format=torch.channels_last)
                 ComfyLogger().log("Image loaded to GPU with mixed precision", "INFO", True)

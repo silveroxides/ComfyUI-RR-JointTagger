@@ -56,6 +56,7 @@
 			"name": "DINOv3 Tagger Proto",
 			"url": "{HF_ENDPOINT}/lodestones/tagger-experiment/resolve/main/tagger_proto.safetensors",
 			"vocab_url": "{HF_ENDPOINT}/lodestones/tagger-experiment/resolve/main/tagger_vocab.json",
+			"cat_vocab_url": "{HF_ENDPOINT}/lodestones/tagger-experiment/resolve/main/tagger_vocab_with_categories.json",
 			"data_url": "{HF_ENDPOINT}/RedRocket/JTP-3/resolve/main/data",
 			"data_tag_file": "jtp-3-hydra-tags.csv"
 		}

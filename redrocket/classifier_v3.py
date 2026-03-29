@@ -6,6 +6,7 @@ from typing import Optional, Tuple, Union, Dict, Any, List
 import hashlib
 import threading
 from torch.nn import Parameter
+import comfy.model_management as mm
 
 from .image_v3_manager import JtpImageV3Manager
 from .tag_v3_manager import JtpTagV3Manager
@@ -19,7 +20,7 @@ class JtpInferenceV3(metaclass=Singleton):
     Inference for JTP-3 Hydra.
     """
     def __init__(self, device: Optional[torch.device] = torch.device('cpu')) -> None:
-        self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = device if device is not None else mm.get_torch_device()
         self.model_lock = threading.Lock()
 
     @classmethod
@@ -156,6 +157,9 @@ class JtpInferenceV3(metaclass=Singleton):
 
         model = ComfyCache.get(f'model_v3.{model_name}.model')
 
+        # Move model to inference device (may have been offloaded to CPU)
+        model.to(device)
+
         # Load/Process Image
         result = JtpImageV3Manager.load(image, device=device, seqlen=seqlen, params_key=params_key)
 
@@ -284,5 +288,10 @@ class JtpInferenceV3(metaclass=Singleton):
              image_key = hashlib.sha256(img_arr.tobytes()).hexdigest()
 
         JtpImageV3Manager.commit_cache(image_key, (tag_str, final_scores, cam_image), params_key)
+
+        # Offload model to free GPU memory
+        offload_device = mm.unet_offload_device()
+        model.to(offload_device)
+        mm.soft_empty_cache()
 
         return tag_str, final_scores, cam_image

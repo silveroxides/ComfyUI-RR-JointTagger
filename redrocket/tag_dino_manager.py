@@ -1,8 +1,9 @@
 """DINOv3 Tagger vocabulary manager — download, load, process tags.
 
-Supports optional implications metadata loaded from a JTP-3-style CSV.
-All tag keys are normalised to spaces (no underscores) to match DINOv3's
-native output format.
+Supports per-tag category data loaded from a categorised vocab JSON
+(``tagger_vocab_with_categories.json``) and optional implications metadata
+loaded from a JTP-3-style CSV.  All tag keys are normalised to spaces (no
+underscores) to match DINOv3's native output format.
 """
 
 from __future__ import annotations
@@ -22,22 +23,50 @@ from ..helpers.config import ComfyExtensionConfig
 from ..helpers.logger import ComfyLogger
 from ..helpers.metaclasses import Singleton
 
-# Category IDs used in the JTP-3 tag CSV
-TAG_CATEGORIES = {
-    "general": 0,
-    "copyright": 3,
-    "character": 4,
-    "species": 5,
-    "meta": 7,
-    "lore": 8,
+# Raw category IDs from the DINOv3 categorised vocabulary.
+TAG_CATEGORIES: Dict[str, int] = {
+    "unassigned":    -1,
+    "general":        0,
+    "artist":         1,
+    "contributor":    2,
+    "copyright":      3,
+    "character":      4,
+    "species/meta":   5,
+    "species":        5,   # alias so users can type either form
+    "disambiguation": 6,
+    "meta":           7,
+    "lore":           8,
+}
+
+# Reverse lookup: raw category ID → canonical config key name.
+# Used by per-category selection to map from tag2category IDs to the
+# config dict keys produced by DINOv3CategoryConfig.
+CATEGORY_ID_TO_NAME: Dict[int, str] = {
+    -1: "unassigned",
+     0: "general",
+     1: "artist",
+     2: "contributor",
+     3: "copyright",
+     4: "character",
+     5: "species_meta",
+     6: "disambiguation",
+     7: "meta",
+     8: "lore",
 }
 
 
 class DINOv3TagManager(metaclass=Singleton):
     """Singleton manager for DINOv3 tagger vocabulary and optional metadata.
 
-    The vocabulary is a JSON file with ``{"idx2tag": ["tag0", "tag1", ...]}``.
-    Tag metadata (implications, categories) is loaded from a JTP-3-style CSV
+    Vocabulary can be loaded from either:
+
+    * **Categorised vocab** (preferred) — a JSON file with
+      ``{"idx2tag": [...], "tag2category": {...}}``.  Provides both the
+      ordered tag list and per-tag category IDs in a single download.
+    * **Plain vocab** (fallback) — a JSON file with
+      ``{"idx2tag": ["tag0", "tag1", ...]}``.  No category data.
+
+    Tag metadata (implications) is loaded separately from a JTP-3-style CSV
     and normalised so all keys use spaces instead of underscores.
 
     Cached under the ``tags_dino`` namespace.
@@ -72,6 +101,16 @@ class DINOv3TagManager(metaclass=Singleton):
         return ComfyCache.get(f"tags_dino.{model_name}.metadata") is not None
 
     @classmethod
+    def has_categories(cls, model_name: str) -> bool:
+        """Return ``True`` if per-tag category data is cached."""
+        return ComfyCache.get(f"tags_dino.{model_name}.tag2category") is not None
+
+    @classmethod
+    def get_tag2category(cls, model_name: str) -> Optional[Dict[str, int]]:
+        """Return the ``{tag_name: raw_category_id}`` dict, or ``None``."""
+        return ComfyCache.get(f"tags_dino.{model_name}.tag2category")
+
+    @classmethod
     def get_idx2tag(cls, model_name: str) -> Optional[List[str]]:
         return ComfyCache.get(f"tags_dino.{model_name}.idx2tag")
 
@@ -81,11 +120,12 @@ class DINOv3TagManager(metaclass=Singleton):
         return len(idx2tag) if idx2tag else 0
 
     # ------------------------------------------------------------------
-    # Load vocabulary (JSON)
+    # Load vocabulary (JSON) — plain vocab (fallback)
     # ------------------------------------------------------------------
 
     @classmethod
     def load(cls, model_name: str) -> bool:
+        """Load the plain vocab JSON (``idx2tag`` only, no categories)."""
         vocab_path = os.path.join(cls().tags_basepath, f"{model_name}-vocab.json")
         if not os.path.exists(vocab_path):
             ComfyLogger().log(
@@ -112,6 +152,59 @@ class DINOv3TagManager(metaclass=Singleton):
         except Exception as e:
             ComfyLogger().log(
                 f"Error loading DINOv3 vocab: {e}\n{traceback.format_exc()}",
+                type="ERROR", always=True,
+            )
+            return False
+
+    # ------------------------------------------------------------------
+    # Load categorised vocabulary (JSON) — preferred
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def load_cat_vocab(cls, model_name: str) -> bool:
+        """Load the categorised vocab JSON.
+
+        The file contains both ``idx2tag`` (ordered tag list) and
+        ``tag2category`` (tag name → raw category ID).  This is the
+        preferred vocab source because it provides category data needed
+        for ``exclude_categories`` without requiring the CSV metadata.
+        """
+        cat_vocab_path = os.path.join(
+            cls().tags_basepath, f"{model_name}-cat-vocab.json",
+        )
+        if not os.path.exists(cat_vocab_path):
+            ComfyLogger().log(
+                f"DINOv3 categorised vocab not found: {cat_vocab_path}",
+                type="WARNING", always=True,
+            )
+            return False
+
+        try:
+            with open(cat_vocab_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            idx2tag: List[str] = data["idx2tag"]
+            tag2category: Dict[str, int] = data.get("tag2category", {})
+
+            # Populate the same cache keys as load() so downstream is unaffected
+            ComfyCache.set(f"tags_dino.{model_name}", {
+                "idx2tag": idx2tag,
+                "num_tags": len(idx2tag),
+            })
+            # Store category mapping separately
+            ComfyCache.set(f"tags_dino.{model_name}.tag2category", tag2category)
+
+            ComfyLogger().log(
+                f"DINOv3 categorised vocab loaded: {len(idx2tag):,} tags, "
+                f"{len(tag2category):,} category entries for {model_name}",
+                type="INFO", always=True,
+            )
+            return True
+
+        except Exception as e:
+            ComfyLogger().log(
+                f"Error loading DINOv3 categorised vocab: {e}\n"
+                f"{traceback.format_exc()}",
                 type="ERROR", always=True,
             )
             return False
@@ -230,6 +323,75 @@ class DINOv3TagManager(metaclass=Singleton):
             ComfyLogger().log(
                 f"Failed to download DINOv3 vocab: {e}\n{traceback.format_exc()}",
                 type="ERROR", always=True,
+            )
+            return False
+
+    # ------------------------------------------------------------------
+    # Download categorised vocabulary (JSON)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def download_cat_vocab(cls, model_name: str) -> bool:
+        """Download the categorised vocab JSON from ``cat_vocab_url``."""
+        os.makedirs(cls().tags_basepath, exist_ok=True)
+
+        config = ComfyExtensionConfig().get()
+        hf_endpoint: str = config.get("huggingface_endpoint", "https://huggingface.co")
+        if not hf_endpoint.startswith("https://"):
+            hf_endpoint = f"https://{hf_endpoint}"
+        hf_endpoint = hf_endpoint.rstrip("/")
+
+        cat_vocab_url = ComfyExtensionConfig().get(
+            property=f"models_dino.{model_name}.cat_vocab_url",
+        )
+        if not cat_vocab_url:
+            ComfyLogger().log(
+                f"No cat_vocab_url for DINOv3 model {model_name} in config",
+                type="WARNING", always=True,
+            )
+            return False
+        cat_vocab_url = cat_vocab_url.replace("{HF_ENDPOINT}", hf_endpoint)
+
+        dest = os.path.join(cls().tags_basepath, f"{model_name}-cat-vocab.json")
+        ComfyLogger().log(
+            f"Downloading DINOv3 categorised vocab from {cat_vocab_url}",
+            type="INFO", always=True,
+        )
+
+        try:
+            response = requests.get(cat_vocab_url, stream=True)
+            response.raise_for_status()
+
+            total_size = int(response.headers.get("content-length", 0))
+            block_size = 1024
+
+            with open(dest, "wb") as f, tqdm(
+                desc=f"{model_name}-cat-vocab",
+                total=total_size,
+                unit="iB",
+                unit_scale=True,
+                unit_divisor=1024,
+            ) as bar:
+                downloaded = 0
+                for data in response.iter_content(block_size):
+                    f.write(data)
+                    bar.update(len(data))
+                    downloaded += len(data)
+                    if cls().download_progress_callback and total_size > 0:
+                        cls().download_progress_callback(
+                            int(downloaded / total_size * 100),
+                            f"{model_name}-cat-vocab.json",
+                        )
+
+            if cls().download_complete_callback:
+                cls().download_complete_callback(f"{model_name}-cat-vocab.json")
+            return True
+
+        except Exception as e:
+            ComfyLogger().log(
+                f"Failed to download DINOv3 categorised vocab: {e}\n"
+                f"{traceback.format_exc()}",
+                type="WARNING", always=True,
             )
             return False
 
@@ -372,6 +534,7 @@ class DINOv3TagManager(metaclass=Singleton):
             Text to prepend.
         """
         metadata = ComfyCache.get(f"tags_dino.{model_name}.metadata")
+        tag2category: Optional[Dict[str, int]] = cls.get_tag2category(model_name)
 
         # Build exclusion set (normalised to lowercase spaces)
         excluded: Set[str] = set()
@@ -381,9 +544,10 @@ class DINOv3TagManager(metaclass=Singleton):
                 if t:
                     excluded.add(t.replace("_", " ").lower())
 
-        # Parse excluded categories
+        # Parse excluded categories — works with tag2category (preferred)
+        # or CSV metadata (fallback).  No dependency on implications.
         excluded_cats: Set[int] = set()
-        if exclude_categories and metadata:
+        if exclude_categories:
             for cat in exclude_categories.split(","):
                 cat = cat.strip().lower()
                 if cat in TAG_CATEGORIES:
@@ -444,10 +608,15 @@ class DINOv3TagManager(metaclass=Singleton):
             if tag_check in excluded:
                 continue
 
-            # Check exclusion by category
-            if excluded_cats and metadata and tag in metadata:
-                cat_id = metadata[tag][0]
-                if cat_id in excluded_cats:
+            # Check exclusion by category — prefer tag2category from cat-vocab,
+            # fall back to CSV metadata tuple[0] (category ID).
+            if excluded_cats:
+                cat_id: Optional[int] = None
+                if tag2category is not None and tag in tag2category:
+                    cat_id = tag2category[tag]
+                elif metadata and tag in metadata:
+                    cat_id = metadata[tag][0]
+                if cat_id is not None and cat_id in excluded_cats:
                     continue
 
             filtered[tag] = prob

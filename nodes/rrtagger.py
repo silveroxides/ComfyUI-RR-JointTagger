@@ -29,10 +29,12 @@ class ModelDevice(Enum):
     def to_torch_device(self) -> torch.device:
         return torch.device(self.value)
 
-def classify_tags(image: Image.Image, model_name: str, tags_name: str, device: comfy.model_management.get_torch_device(), steps: float = 0.35, threshold: float = 0.35, exclude_tags: str = "", replace_underscore: bool = True, trailing_comma: bool = False, implications_mode: str = "off", exclude_categories: str = "", prefix: str = "") -> Tuple[str, Dict[str, float]]:
+def classify_tags(image: Image.Image, model_name: str, tags_name: str, device: torch.device = None, steps: float = 0.35, threshold: float = 0.35, exclude_tags: str = "", replace_underscore: bool = True, trailing_comma: bool = False, implications_mode: str = "off", exclude_categories: str = "", prefix: str = "") -> Tuple[str, Dict[str, float]]:
     """
     Classify e621 tags for an image using RedRocket JTP Vision Transformer model
     """
+    if device is None:
+        device = comfy.model_management.get_torch_device()
     tag_string, tag_scores = JtpInference().run_classifier(model_name=model_name, device=device, tags_name=tags_name, image=image, steps=steps, threshold=threshold, exclude_tags=exclude_tags, replace_underscore=replace_underscore, trailing_comma=trailing_comma, implications_mode=implications_mode, exclude_categories=exclude_categories, prefix=prefix)
     return tag_string, tag_scores
 

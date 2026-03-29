@@ -4,6 +4,7 @@ from PIL import Image
 import numpy as np
 import torch
 from typing import Optional, Tuple, Union, Dict, Any
+import comfy.model_management as mm
 
 from .image_manager import JtpImageManager
 
@@ -18,7 +19,7 @@ class JtpInference(metaclass=Singleton):
     """
     def __init__(self, device: Optional[torch.device] = torch.device('cpu')) -> None:
         torch.set_grad_enabled(False)
-        self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = device if device is not None else mm.get_torch_device()
 
     @classmethod
     def run_classifier(
@@ -86,6 +87,8 @@ class JtpInference(metaclass=Singleton):
         if model_data is None:
             ComfyLogger().log(message=f"Model data for {model_name} not found in cache", type="ERROR", always=True)
             return "", {}
+        # Move model to inference device (may have been offloaded to CPU)
+        model_data.to(device)
         with torch.no_grad():
             if f"{model_version}" == "1":
                 logits = model_data(tensor)
@@ -97,6 +100,11 @@ class JtpInference(metaclass=Singleton):
             else:
                 ComfyLogger().log(message=f"Model version {model_version} not supported", type="ERROR", always=True)
                 return "", {}
+        # Offload model to free GPU memory
+        offload_device = mm.unet_offload_device()
+        model_data.to(offload_device)
+        mm.soft_empty_cache()
+
         ComfyLogger().log(message="Processing tags...", type="DEBUG", always=True)
         tags_str, tag_scores = JtpTagManager().process_tags(
             tags_name=tags_name,

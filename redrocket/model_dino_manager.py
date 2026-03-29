@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import hashlib
 import os
 import traceback
 from typing import Callable, List, Optional, Tuple
@@ -72,6 +73,137 @@ class DINOv3ModelManager(metaclass=Singleton):
         return [f for f in os.listdir(model_path) if f.endswith(".safetensors")]
 
     # ------------------------------------------------------------------
+    # Update check helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def compute_local_sha256(file_path: str) -> Optional[str]:
+        """Compute the SHA-256 hex digest of a local file.
+
+        Reads in 64 KiB chunks to keep memory usage low for large
+        ``.safetensors`` files.
+
+        Returns ``None`` if the file does not exist or an I/O error occurs.
+        """
+        try:
+            h = hashlib.sha256()
+            with open(file_path, "rb") as f:
+                for chunk in iter(lambda: f.read(65_536), b""):
+                    h.update(chunk)
+            return h.hexdigest()
+        except Exception as exc:
+            ComfyLogger().log(
+                f"Failed to compute SHA-256 for {file_path}: {exc}",
+                type="WARNING", always=True,
+            )
+            return None
+
+    @classmethod
+    def fetch_remote_sha256(cls, model_name: str) -> Optional[str]:
+        """Fetch the SHA-256 (``etag``) of the remote model from HuggingFace.
+
+        Sends a lightweight request with the ``application/vnd.xet-fileinfo+json``
+        accept header and ``Range: bytes=0-0`` so that HuggingFace returns a
+        small JSON payload containing the ``etag`` field instead of streaming
+        the full file.
+
+        Returns the SHA-256 hex string, or ``None`` on any failure.
+        """
+        config = ComfyExtensionConfig().get()
+        hf_endpoint: str = config.get("huggingface_endpoint", "https://huggingface.co")
+        if not hf_endpoint.startswith("https://"):
+            hf_endpoint = f"https://{hf_endpoint}"
+        hf_endpoint = hf_endpoint.rstrip("/")
+
+        url: str = ComfyExtensionConfig().get(
+            property=f"models_dino.{model_name}.url",
+        )
+        if not url:
+            ComfyLogger().log(
+                f"No URL configured for DINOv3 model {model_name}",
+                type="WARNING", always=True,
+            )
+            return None
+        url = url.replace("{HF_ENDPOINT}", hf_endpoint)
+
+        try:
+            resp = requests.get(
+                url,
+                headers={
+                    "Accept": "application/vnd.xet-fileinfo+json, */*",
+                    "Range": "bytes=0-0",
+                },
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            etag: str = data.get("etag", "")
+            # The etag value is returned with surrounding quotes, strip them.
+            return etag.strip('"') if etag else None
+        except Exception as exc:
+            ComfyLogger().log(
+                f"Failed to fetch remote SHA-256 for {model_name}: {exc}",
+                type="WARNING", always=True,
+            )
+            return None
+
+    @classmethod
+    def check_for_update(cls, model_name: str) -> bool:
+        """Compare the local model SHA-256 against the remote repository.
+
+        This check is guarded by a per-model ``update_checked`` flag in
+        ``ComfyCache`` so that it only runs **once per ComfyUI session**
+        (the cache is cleared on restart).
+
+        Returns ``True`` if the model was re-downloaded, ``False`` otherwise.
+        """
+        # Once-per-session guard
+        if ComfyCache.get(f"model_dino.{model_name}.update_checked"):
+            return False
+
+        # Mark as checked regardless of outcome so we don't retry every run.
+        ComfyCache.set(f"model_dino.{model_name}.update_checked", True)
+
+        model_path = os.path.join(cls().model_basepath, f"{model_name}.safetensors")
+        if not os.path.exists(model_path):
+            # Not installed yet — nothing to compare; download will happen later.
+            return False
+
+        ComfyLogger().log(
+            f"Checking for DINOv3 model updates ({model_name}) …",
+            type="INFO", always=True,
+        )
+
+        local_hash = cls.compute_local_sha256(model_path)
+        remote_hash = cls.fetch_remote_sha256(model_name)
+
+        if local_hash is None or remote_hash is None:
+            ComfyLogger().log(
+                "Unable to compare model hashes — skipping update check",
+                type="WARNING", always=True,
+            )
+            return False
+
+        if local_hash == remote_hash:
+            ComfyLogger().log(
+                f"DINOv3 model {model_name} is up-to-date (SHA-256 match)",
+                type="INFO", always=True,
+            )
+            return False
+
+        ComfyLogger().log(
+            f"DINOv3 model {model_name} update detected "
+            f"(local={local_hash[:12]}… remote={remote_hash[:12]}…) — re-downloading",
+            type="INFO", always=True,
+        )
+
+        # Evict the loaded model from cache so it will be reloaded after download.
+        if cls.is_loaded(model_name):
+            ComfyCache.set(f"model_dino.{model_name}", None)
+
+        return cls.download(model_name)
+
+    # ------------------------------------------------------------------
     # Load
     # ------------------------------------------------------------------
 
@@ -134,7 +266,7 @@ class DINOv3ModelManager(metaclass=Singleton):
 
             # Backbone in bfloat16 (or float16 for older GPUs), projection stays float32
             use_dtype = torch.bfloat16
-            if device.type == "cuda" and torch.cuda.is_available():
+            if device.type == "cuda":
                 cap = torch.cuda.get_device_capability()
                 if cap[0] < 8:
                     use_dtype = torch.float16

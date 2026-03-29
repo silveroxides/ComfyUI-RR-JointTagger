@@ -7,6 +7,7 @@ import torch
 import timm
 import safetensors.torch
 from tqdm import tqdm
+import comfy.model_management as mm
 
 from ..helpers.cache import CacheCleanupMethod, ComfyCache
 from ..helpers.config import ComfyExtensionConfig
@@ -70,9 +71,8 @@ class JtpModelManager(metaclass=Singleton):
         if f"{version}" == "2":
             model.head = V2GatedHead(min(model.head.weight.shape), 9083)
         safetensors.torch.load_model(model=model, filename=model_path)
-        if torch.cuda.is_available() and device.type == "cuda":
-            model.cuda()
-            model.to(dtype=torch.float16, memory_format=torch.channels_last)
+        if device.type != "cpu":
+            model.to(device=device, dtype=torch.float16, memory_format=torch.channels_last)
         model.eval()
         ComfyCache.set(f'model.{model_name}', {
             "model": model,
@@ -94,19 +94,10 @@ class JtpModelManager(metaclass=Singleton):
         if model is None:
             ComfyLogger().log(message=f"Model {model_name} is not loaded, cannot switch it to another device", type="ERROR", always=True)
             return False
-        if device.type == "cuda" and not torch.cuda.is_available():
-            ComfyLogger().log(message="CUDA is not available, cannot switch to GPU", type="ERROR", always=True)
-            return False
-        if device.type == "cuda" and torch.cuda.get_device_capability()[0] >= 7:
-            model.cuda()
-            model = model.to(dtype=torch.float16, memory_format=torch.channels_last)
+        if device.type != "cpu":
+            model = model.to(device=device, dtype=torch.float16, memory_format=torch.channels_last)
             ComfyLogger().log(message="Switched to GPU with mixed precision", type="INFO", always=True)
-        elif device.type == "cuda" and torch.cuda.get_device_capability()[0] < 7:
-            model.cuda()
-            model = model.to(dtype=torch.float32, memory_format=torch.channels_last)
-            ComfyLogger().log(message="Switched to GPU without mixed precision", type="WARNING", always=True)
         else:
-            model.cpu()
             model = model.to(device=device)
             ComfyLogger().log(message="Switched to CPU", type="INFO", always=True)
         ComfyCache.set(f'model.{model_name}.device', device)
@@ -123,8 +114,7 @@ class JtpModelManager(metaclass=Singleton):
             return True
         ComfyCache.flush(f'model.{model_name}')
         gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        mm.soft_empty_cache()
         return True
 
     @classmethod
