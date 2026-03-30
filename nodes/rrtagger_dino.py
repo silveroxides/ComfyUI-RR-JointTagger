@@ -25,6 +25,7 @@ DINO_CATEGORY_CONFIG_TYPE = "DINO_CATEGORY_CONFIG"
 
 # Canonical category names used as config-key prefixes (no slashes).
 _CATEGORY_KEYS: List[str] = [
+    "unassigned",
     "general",
     "artist",
     "contributor",
@@ -94,7 +95,7 @@ class DINOv3Tagger(ComfyNodeABC):
                 "implications_mode": (["off", "inherit", "constrain", "remove", "constrain-remove"], {"default": "off", "tooltip": "How to handle implied tags (e.g. if 'cat' is present, 'feline' is implied). Requires tag metadata CSV."}),
                 "max_tags": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Maximum number of tags in the final output (applied after implications). 0 = unlimited."}),
                 "exclude_tags": (IO.STRING, {"multiline": True, "tooltip": "Comma-separated tags to exclude from output."}),
-                "exclude_categories": (IO.STRING, {"multiline": True, "tooltip": "Comma-separated categories to exclude: general, artist, contributor, copyright, character, species/meta (or species), disambiguation, meta, lore."}),
+                "exclude_categories": (IO.STRING, {"multiline": True, "tooltip": "Comma-separated categories to exclude: unassigned, general, artist, contributor, copyright, character, species/meta (or species), disambiguation, meta, lore."}),
                 "trailing_comma": (IO.BOOLEAN, {"default": False, "tooltip": "Add a trailing comma to the tag string."}),
                 "prefix": (IO.STRING, {"default": "", "tooltip": "Text to prepend to the tags output."}),
                 "seed": (IO.INT, {"default": 0, "min": 0, "max": 0xffffffffffffffff, "tooltip": "Seed for deterministic execution."}),
