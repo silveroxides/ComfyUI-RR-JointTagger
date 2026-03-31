@@ -3,7 +3,7 @@ from pathlib import Path
 from PIL import Image
 import numpy as np
 import torch
-from typing import Optional, Tuple, Union, Dict, Any
+from typing import Tuple, Union, Dict, Any
 import comfy.model_management as mm
 
 from .image_manager import JtpImageManager
@@ -11,15 +11,10 @@ from .image_manager import JtpImageManager
 from ..redrocket.tag_manager import JtpTagManager
 from ..redrocket.model_manager import JtpModelManager
 from ..helpers.cache import ComfyCache
-from ..helpers.metaclasses import Singleton
-
-class JtpInference(metaclass=Singleton):
+class JtpInference:
     """
     A Clip Vision Classifier by RedRocket (inference code made robust by deitydurg)
     """
-    def __init__(self, device: Optional[torch.device] = torch.device('cpu')) -> None:
-        torch.set_grad_enabled(False)
-        self.device = device if device is not None else mm.get_torch_device()
 
     @classmethod
     def run_classifier(

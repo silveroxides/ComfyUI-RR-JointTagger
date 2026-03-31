@@ -4,7 +4,6 @@ import numpy as np
 import torch
 from typing import Optional, Tuple, Union, Dict, Any, List
 import hashlib
-import threading
 from torch.nn import Parameter
 import comfy.model_management as mm
 
@@ -12,16 +11,12 @@ from .image_v3_manager import JtpImageV3Manager
 from .tag_v3_manager import JtpTagV3Manager
 from .model_v3_manager import JtpModelV3Manager
 from ..helpers.cache import ComfyCache
-from ..helpers.metaclasses import Singleton
 from ..helpers.logger import ComfyLogger
 
-class JtpInferenceV3(metaclass=Singleton):
+class JtpInferenceV3:
     """
     Inference for JTP-3 Hydra.
     """
-    def __init__(self, device: Optional[torch.device] = torch.device('cpu')) -> None:
-        self.device = device if device is not None else mm.get_torch_device()
-        self.model_lock = threading.Lock()
 
     @classmethod
     def run_cam(cls, model, display_image, features, tag_idx, cam_depth, patch_coords, patch_valid):
@@ -43,60 +38,56 @@ class JtpInferenceV3(metaclass=Singleton):
         # Ensure intermediates is a mutable list for in-place updates
         intermediates = list(intermediates)
 
-        # We need to use the instance lock
-        instance = cls()
+        saved_q = model.attn_pool.q
+        saved_p = model.attn_pool.out_proj.weight
 
-        with instance.model_lock:
-            saved_q = model.attn_pool.q
-            saved_p = model.attn_pool.out_proj.weight
+        try:
+            # Slice weights for the specific tag
+            model.attn_pool.q = Parameter(saved_q[:, [tag_idx], :], requires_grad=False)
+            model.attn_pool.out_proj.weight = Parameter(saved_p[[tag_idx], :, :], requires_grad=False)
 
-            try:
-                # Slice weights for the specific tag
-                model.attn_pool.q = Parameter(saved_q[:, [tag_idx], :], requires_grad=False)
-                model.attn_pool.out_proj.weight = Parameter(saved_p[[tag_idx], :, :], requires_grad=False)
+            with torch.enable_grad():
+                # We need to process intermediates one by one or all together?
+                # The original implementation seems to iterate.
+                # BUT, forward_head likely expects a specific input structure.
+                # Wait, 'intermediate' in forward_head(x) is usually the output of the transformer blocks.
 
-                with torch.enable_grad():
-                    # We need to process intermediates one by one or all together?
-                    # The original implementation seems to iterate.
-                    # BUT, forward_head likely expects a specific input structure.
-                    # Wait, 'intermediate' in forward_head(x) is usually the output of the transformer blocks.
+                # If we iterate, we are doing multiple forward/backward passes.
+                # Each intermediate is a tensor [B, N, C].
 
-                    # If we iterate, we are doing multiple forward/backward passes.
-                    # Each intermediate is a tensor [B, N, C].
+                # The issue reported is "element 0 of tensors does not require grad".
+                # This happens when we call backward() on a tensor that has no history.
 
-                    # The issue reported is "element 0 of tensors does not require grad".
-                    # This happens when we call backward() on a tensor that has no history.
+                for i in range(len(intermediates)):
+                    # Ensure the input tensor has requires_grad=True and is a leaf tensor for this subgraph.
+                    # We detach from any previous graph (inference was no_grad anyway).
+                    intermediate_tensor = intermediates[i].detach()
+                    intermediate_tensor.requires_grad_(True)
 
-                    for i in range(len(intermediates)):
-                        # Ensure the input tensor has requires_grad=True and is a leaf tensor for this subgraph.
-                        # We detach from any previous graph (inference was no_grad anyway).
-                        intermediate_tensor = intermediates[i].detach()
-                        intermediate_tensor.requires_grad_(True)
+                    # We might need to retain grad if it's not a leaf, but here it IS the leaf of our new graph.
+                    # However, for safety and access later:
+                    intermediate_tensor.retain_grad()
 
-                        # We might need to retain grad if it's not a leaf, but here it IS the leaf of our new graph.
-                        # However, for safety and access later:
-                        intermediate_tensor.retain_grad()
+                    # Forward pass through the head with sliced weights
+                    # Note: forward_head usually takes the *last* hidden state.
+                    # If 'intermediates' are layers, does forward_head handle them all?
+                    # Assuming forward_head(x) expects the transformer output.
 
-                        # Forward pass through the head with sliced weights
-                        # Note: forward_head usually takes the *last* hidden state.
-                        # If 'intermediates' are layers, does forward_head handle them all?
-                        # Assuming forward_head(x) expects the transformer output.
+                    logits = model.forward_head(intermediate_tensor, patch_valid=patch_valid)
 
-                        logits = model.forward_head(intermediate_tensor, patch_valid=patch_valid)
+                    # Backward pass
+                    # We want to maximize the target class score (logits[0, 0] since we sliced the head to size 1)
+                    if logits.requires_grad:
+                        logits[0, 0].backward()
+                    else:
+                         # This should not happen if intermediate_tensor requires grad and is used in forward_head
+                         ComfyLogger().log("CAM: Logits do not require grad, skipping backward.", "WARNING")
 
-                        # Backward pass
-                        # We want to maximize the target class score (logits[0, 0] since we sliced the head to size 1)
-                        if logits.requires_grad:
-                            logits[0, 0].backward()
-                        else:
-                             # This should not happen if intermediate_tensor requires grad and is used in forward_head
-                             ComfyLogger().log("CAM: Logits do not require grad, skipping backward.", "WARNING")
-
-                        # Update the list so we can access .grad later
-                        intermediates[i] = intermediate_tensor
-            finally:
-                model.attn_pool.q = saved_q
-                model.attn_pool.out_proj.weight = saved_p
+                    # Update the list so we can access .grad later
+                    intermediates[i] = intermediate_tensor
+        finally:
+            model.attn_pool.q = saved_q
+            model.attn_pool.out_proj.weight = saved_p
 
         cam_1d = None
         for intermediate in intermediates:

@@ -13,10 +13,12 @@ import gc
 import json
 import os
 import traceback
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from fnmatch import fnmatchcase
+from typing import Dict, List, Optional, Set, Tuple
 
 import requests
 from tqdm import tqdm
+import comfy.utils
 
 from ..helpers.cache import CacheCleanupMethod, ComfyCache
 from ..helpers.config import ComfyExtensionConfig
@@ -72,15 +74,8 @@ class DINOv3TagManager(metaclass=Singleton):
     Cached under the ``tags_dino`` namespace.
     """
 
-    def __init__(
-        self,
-        tags_basepath: str,
-        download_progress_callback: Callable[[int, str], None],
-        download_complete_callback: Optional[Callable[[str], None]] = None,
-    ) -> None:
+    def __init__(self, tags_basepath: str) -> None:
         self.tags_basepath = tags_basepath
-        self.download_progress_callback = download_progress_callback
-        self.download_complete_callback = download_complete_callback
         ComfyCache.set_max_size("tags_dino", 1)
         ComfyCache.set_cachemethod("tags_dino", CacheCleanupMethod.ROUND_ROBIN)
 
@@ -297,6 +292,7 @@ class DINOv3TagManager(metaclass=Singleton):
             total_size = int(response.headers.get("content-length", 0))
             block_size = 1024
 
+            pbar = comfy.utils.ProgressBar(total_size) if total_size > 0 else None
             with open(dest, "wb") as f, tqdm(
                 desc=f"{model_name}-vocab",
                 total=total_size,
@@ -309,14 +305,9 @@ class DINOv3TagManager(metaclass=Singleton):
                     f.write(data)
                     bar.update(len(data))
                     downloaded += len(data)
-                    if cls().download_progress_callback and total_size > 0:
-                        cls().download_progress_callback(
-                            int(downloaded / total_size * 100),
-                            f"{model_name}-vocab.json",
-                        )
+                    if pbar is not None:
+                        pbar.update_absolute(downloaded, total_size)
 
-            if cls().download_complete_callback:
-                cls().download_complete_callback(f"{model_name}-vocab.json")
             return True
 
         except Exception as e:
@@ -365,6 +356,7 @@ class DINOv3TagManager(metaclass=Singleton):
             total_size = int(response.headers.get("content-length", 0))
             block_size = 1024
 
+            pbar = comfy.utils.ProgressBar(total_size) if total_size > 0 else None
             with open(dest, "wb") as f, tqdm(
                 desc=f"{model_name}-cat-vocab",
                 total=total_size,
@@ -377,14 +369,9 @@ class DINOv3TagManager(metaclass=Singleton):
                     f.write(data)
                     bar.update(len(data))
                     downloaded += len(data)
-                    if cls().download_progress_callback and total_size > 0:
-                        cls().download_progress_callback(
-                            int(downloaded / total_size * 100),
-                            f"{model_name}-cat-vocab.json",
-                        )
+                    if pbar is not None:
+                        pbar.update_absolute(downloaded, total_size)
 
-            if cls().download_complete_callback:
-                cls().download_complete_callback(f"{model_name}-cat-vocab.json")
             return True
 
         except Exception as e:
@@ -457,6 +444,7 @@ class DINOv3TagManager(metaclass=Singleton):
             total_size = int(response.headers.get("content-length", 0))
             block_size = 1024
 
+            pbar = comfy.utils.ProgressBar(total_size) if total_size > 0 else None
             with open(dest, "wb") as f, tqdm(
                 desc=f"{model_name}-tags.csv",
                 total=total_size,
@@ -469,14 +457,9 @@ class DINOv3TagManager(metaclass=Singleton):
                     f.write(chunk)
                     bar.update(len(chunk))
                     downloaded += len(chunk)
-                    if cls().download_progress_callback and total_size > 0:
-                        cls().download_progress_callback(
-                            int(downloaded / total_size * 100),
-                            f"{model_name}-tags.csv",
-                        )
+                    if pbar is not None:
+                        pbar.update_absolute(downloaded, total_size)
 
-            if cls().download_complete_callback:
-                cls().download_complete_callback(f"{model_name}-tags.csv")
             return True
 
         except Exception as e:
@@ -536,13 +519,21 @@ class DINOv3TagManager(metaclass=Singleton):
         metadata = ComfyCache.get(f"tags_dino.{model_name}.metadata")
         tag2category: Optional[Dict[str, int]] = cls.get_tag2category(model_name)
 
-        # Build exclusion set (normalised to lowercase spaces)
-        excluded: Set[str] = set()
+        # Build exclusion sets (normalised to lowercase spaces).
+        # Entries containing '*' are glob-style wildcard patterns;
+        # everything else is an exact-match entry.
+        excluded_exact: Set[str] = set()
+        excluded_wildcards: List[str] = []
         if exclude_tags:
             for t in exclude_tags.split(","):
                 t = t.strip()
-                if t:
-                    excluded.add(t.replace("_", " ").lower())
+                if not t:
+                    continue
+                normalised = t.replace("_", " ").lower()
+                if "*" in normalised:
+                    excluded_wildcards.append(normalised)
+                else:
+                    excluded_exact.add(normalised)
 
         # Parse excluded categories — works with tag2category (preferred)
         # or CSV metadata (fallback).  No dependency on implications.
@@ -603,9 +594,11 @@ class DINOv3TagManager(metaclass=Singleton):
             if prob < threshold:
                 continue
 
-            # Check exclusion by name
+            # Check exclusion by name (exact match or wildcard)
             tag_check = tag.replace("_", " ").lower()
-            if tag_check in excluded:
+            if tag_check in excluded_exact:
+                continue
+            if excluded_wildcards and any(fnmatchcase(tag_check, p) for p in excluded_wildcards):
                 continue
 
             # Check exclusion by category — prefer tag2category from cat-vocab,

@@ -3,17 +3,15 @@
 	"logging": true,
 	"loglevel": "debug",
 	"huggingface_endpoint": "https://huggingface.co",
-	"api_endpoint": "furrydiffusion",
 	"image_cache_maxsize": 1,
 	"image_cache_method": "round_robin",
-	"fdtagger_settings": {
+	"rrtagger_settings": {
 		"model": "RedRocket PILOT v1",
 		"steps": 255,
 		"threshold": 0.35,
 		"exclude_tags": "",
 		"replace_underscore": true,
-		"trailing_comma": true,
-		"device": "cuda"
+		"trailing_comma": true
 	},
 	"models": {
 		"JTP_PILOT-e4-vit_so400m_patch14_siglip_384": {

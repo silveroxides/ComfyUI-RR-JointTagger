@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import threading
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -15,23 +14,18 @@ import comfy.model_management as mm
 
 from ..helpers.cache import ComfyCache
 from ..helpers.logger import ComfyLogger
-from ..helpers.metaclasses import Singleton
 
 from .image_dino_manager import DINOv3ImageManager
 from .model_dino_manager import DINOv3ModelManager
 from .tag_dino_manager import CATEGORY_ID_TO_NAME, DINOv3TagManager
 
 
-class DINOv3Inference(metaclass=Singleton):
+class DINOv3Inference:
     """Inference wrapper for the DINOv3 Tagger pipeline.
 
     Orchestrates model loading, vocab loading, image preprocessing, and
     forward pass.  Returns formatted tag strings and score dicts.
     """
-
-    def __init__(self, device: Optional[torch.device] = None) -> None:
-        self.device = device or mm.get_torch_device()
-        self.model_lock = threading.Lock()
 
     @classmethod
     def run_classifier(
@@ -216,12 +210,10 @@ class DINOv3Inference(metaclass=Singleton):
         # ----------------------------------------------------------
         # 4. Forward pass
         # ----------------------------------------------------------
-        instance = cls()
-        with instance.model_lock:
-            with torch.no_grad(), torch.autocast(
-                device_type=device.type, dtype=model_dtype,
-            ):
-                logits = model(pixel_values)[0]  # [num_tags]
+        with torch.no_grad(), torch.autocast(
+            device_type=device.type, dtype=model_dtype,
+        ):
+            logits = model(pixel_values)[0]  # [num_tags]
 
         scores = torch.sigmoid(logits.float())
 

@@ -1,12 +1,13 @@
 import gc
 import os
 import traceback
-from typing import Callable, List, Optional, Union, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any
 import requests
 import torch
 from unifiedefficientloader import UnifiedSafetensorsLoader
 from torch.nn import Identity, Linear
 from tqdm import tqdm
+import comfy.utils
 
 from ..helpers.cache import CacheCleanupMethod, ComfyCache
 from ..helpers.config import ComfyExtensionConfig
@@ -20,10 +21,8 @@ class JtpModelV3Manager(metaclass=Singleton):
     """
     Manager for JTP-3 Hydra models.
     """
-    def __init__(self, model_basepath: str, download_progress_callback: Callable[[int, int], None], download_complete_callback: Optional[Callable[[str], None]] = None) -> None:
+    def __init__(self, model_basepath: str) -> None:
         self.model_basepath = model_basepath
-        self.download_progress_callback = download_progress_callback
-        self.download_complete_callback = download_complete_callback
         ComfyCache.set_max_size('model_v3', 1)
         ComfyCache.set_cachemethod('model_v3', CacheCleanupMethod.ROUND_ROBIN)
 
@@ -153,6 +152,7 @@ class JtpModelV3Manager(metaclass=Singleton):
             total_size = int(response.headers.get('content-length', 0))
             block_size = 1024
 
+            pbar = comfy.utils.ProgressBar(total_size) if total_size > 0 else None
             with open(model_path, 'wb') as file, tqdm(
                 desc=model_name,
                 total=total_size,
@@ -165,10 +165,9 @@ class JtpModelV3Manager(metaclass=Singleton):
                     file.write(data)
                     bar.update(len(data))
                     downloaded += len(data)
-                    if cls().download_progress_callback and total_size > 0:
-                        cls().download_progress_callback(int(downloaded / total_size * 100), model_name)
+                    if pbar is not None:
+                        pbar.update_absolute(downloaded, total_size)
 
-            cls().download_complete_callback(model_name)
             return True
         except Exception as err:
             ComfyLogger().log(message=f"Unable to download model: {err}\n{traceback.format_exc()}", type="ERROR", always=True)

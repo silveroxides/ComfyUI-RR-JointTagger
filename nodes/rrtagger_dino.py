@@ -17,7 +17,6 @@ from ..redrocket.model_dino_manager import DINOv3ModelManager
 from ..redrocket.tag_dino_manager import DINOv3TagManager
 from ..redrocket.image_dino_manager import DINOv3ImageManager
 from ..helpers.config import ComfyExtensionConfig
-from .rrtagger import download_progress_callback, download_complete_callback
 import folder_paths
 
 # Custom ComfyUI type for the per-category config dict.
@@ -94,7 +93,7 @@ class DINOv3Tagger(ComfyNodeABC):
                 "max_size": (IO.INT, {"default": 1024, "min": 64, "max": 4096, "step": 16, "tooltip": "Long-edge pixel cap. Image is resized to fit, snapped to 16px multiples."}),
                 "implications_mode": (["off", "inherit", "constrain", "remove", "constrain-remove"], {"default": "off", "tooltip": "How to handle implied tags (e.g. if 'cat' is present, 'feline' is implied). Requires tag metadata CSV."}),
                 "max_tags": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Maximum number of tags in the final output (applied after implications). 0 = unlimited."}),
-                "exclude_tags": (IO.STRING, {"multiline": True, "tooltip": "Comma-separated tags to exclude from output."}),
+                "exclude_tags": (IO.STRING, {"multiline": True, "tooltip": "Comma-separated tags to exclude. Supports * wildcards: human* (starts with), *human (ends with), *human* (contains), human*top (starts/ends)."}),
                 "exclude_categories": (IO.STRING, {"multiline": True, "tooltip": "Comma-separated categories to exclude: unassigned, general, artist, contributor, copyright, character, species/meta (or species), disambiguation, meta, lore."}),
                 "trailing_comma": (IO.BOOLEAN, {"default": False, "tooltip": "Add a trailing comma to the tag string."}),
                 "prefix": (IO.STRING, {"default": "", "tooltip": "Text to prepend to the tags output."}),
@@ -180,15 +179,6 @@ class DINOv3Tagger(ComfyNodeABC):
 model_basepath = os.path.join(folder_paths.models_dir, "RedRocket")
 tags_basepath = os.path.join(model_basepath, "tags")
 
-DINOv3ModelManager(
-    model_basepath=model_basepath,
-    download_progress_callback=download_progress_callback,
-    download_complete_callback=download_complete_callback,
-)
-DINOv3TagManager(
-    tags_basepath=tags_basepath,
-    download_progress_callback=download_progress_callback,
-    download_complete_callback=download_complete_callback,
-)
+DINOv3ModelManager(model_basepath=model_basepath)
+DINOv3TagManager(tags_basepath=tags_basepath)
 DINOv3ImageManager()
-DINOv3Inference(device=comfy.model_management.get_torch_device())

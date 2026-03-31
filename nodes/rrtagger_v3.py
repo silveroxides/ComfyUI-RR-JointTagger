@@ -11,7 +11,6 @@ from ..redrocket.model_v3_manager import JtpModelV3Manager
 from ..redrocket.tag_v3_manager import JtpTagV3Manager
 from ..redrocket.image_v3_manager import JtpImageV3Manager
 from ..helpers.config import ComfyExtensionConfig
-from .rrtagger import download_progress_callback, download_complete_callback
 import os
 import folder_paths
 
@@ -35,7 +34,7 @@ class Jtp3HydraTagger(ComfyNodeABC):
             "cam_depth": (IO.INT, {"default": 1, "min": 1, "max": 27, "step": 1, "display": "slider", "tooltip": "Depth of the Attention Map overlay. Higher values include more context but may be less precise."}),
             "seqlen": (IO.INT, {"default": 1024, "min": 64, "max": 2048, "step": 64, "tooltip": "NaFlex sequence length. Determines internal resolution."}),
             "implications_mode": (["inherit", "constrain", "remove", "constrain-remove", "off"], {"default": "inherit", "tooltip": "How to handle implied tags (e.g. if 'cat' is present, 'feline' is implied)."}),
-            "exclude_tags": (IO.STRING, {"multiline": True, "tooltip": "Comma separated tags to exclude (e.g. humanoid, 1girl)."}),
+            "exclude_tags": (IO.STRING, {"multiline": True, "tooltip": "Comma-separated tags to exclude. Supports * wildcards: human* (starts with), *human (ends with), *human* (contains), human*top (starts/ends)."}),
             "exclude_categories": (IO.STRING, {"multiline": True, "tooltip": "Comma separated categories to exclude (e.g. artist, copyright, character, species, meta, lore)."}),
             "prefix": (IO.STRING, {"default": "", "tooltip": "Text to prepend to the tags output."}),
             "original_tags": (IO.BOOLEAN, {"default": False, "tooltip": "If True, output original e621 tags (e.g. 'vulva'). If False, rewrites them (e.g. 'pussy') compatible with some diffusion models."}),
@@ -165,7 +164,6 @@ class Jtp3HydraTagger(ComfyNodeABC):
 model_basepath = os.path.join(folder_paths.models_dir, "RedRocket")
 tags_basepath = os.path.join(model_basepath, "tags")
 
-JtpModelV3Manager(model_basepath=model_basepath, download_progress_callback=download_progress_callback, download_complete_callback=download_complete_callback)
-JtpTagV3Manager(tags_basepath=tags_basepath, download_progress_callback=download_progress_callback, download_complete_callback=download_complete_callback)
+JtpModelV3Manager(model_basepath=model_basepath)
+JtpTagV3Manager(tags_basepath=tags_basepath)
 JtpImageV3Manager()
-JtpInferenceV3(device=comfy.model_management.get_torch_device())
