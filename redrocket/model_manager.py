@@ -5,7 +5,7 @@ from typing import Callable, List, Optional, Union
 import requests
 import torch
 import timm
-import safetensors.torch
+from unifiedefficientloader import UnifiedSafetensorsLoader
 from tqdm import tqdm
 import comfy.model_management as mm
 
@@ -70,7 +70,9 @@ class JtpModelManager(metaclass=Singleton):
         model: torch.nn.Module = timm.create_model("vit_so400m_patch14_siglip_384.webli", pretrained=False, num_classes=9083)
         if f"{version}" == "2":
             model.head = V2GatedHead(min(model.head.weight.shape), 9083)
-        safetensors.torch.load_model(model=model, filename=model_path)
+        with UnifiedSafetensorsLoader(model_path, low_memory=True) as loader:
+            sd = {key: loader.get_tensor(key) for key in loader.keys()}
+        model.load_state_dict(sd)
         if device.type != "cpu":
             model.to(device=device, dtype=torch.float16, memory_format=torch.channels_last)
         model.eval()
