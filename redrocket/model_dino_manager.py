@@ -10,7 +10,7 @@ from typing import Callable, List, Optional, Tuple
 
 import requests
 import torch
-from safetensors.torch import load_file
+from unifiedefficientloader import UnifiedSafetensorsLoader
 from tqdm import tqdm
 
 from ..helpers.cache import CacheCleanupMethod, ComfyCache
@@ -247,7 +247,8 @@ class DINOv3ModelManager(metaclass=Singleton):
         )
 
         try:
-            sd = load_file(model_path, device="cpu")
+            with UnifiedSafetensorsLoader(model_path, low_memory=True) as loader:
+                sd = {key: loader.get_tensor(key) for key in loader.keys()}
 
             model = DINOv3TaggerModel(num_tags=num_tags)
             missing, unexpected = model.load_state_dict(sd, strict=False, assign=True)

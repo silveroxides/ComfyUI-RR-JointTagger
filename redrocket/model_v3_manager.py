@@ -4,8 +4,7 @@ import traceback
 from typing import Callable, List, Optional, Union, Tuple, Dict, Any
 import requests
 import torch
-import safetensors.torch
-from safetensors import safe_open
+from unifiedefficientloader import UnifiedSafetensorsLoader
 from torch.nn import Identity, Linear
 from tqdm import tqdm
 
@@ -52,9 +51,9 @@ class JtpModelV3Manager(metaclass=Singleton):
         ComfyLogger().log(message=f"Loading JTP-3 model {model_name} from {model_path}...", type="INFO", always=True)
 
         try:
-            with safe_open(model_path, framework="pt", device="cpu") as file:
-                metadata = file.metadata()
-                state_dict = {key: file.get_tensor(key) for key in file.keys()}
+            with UnifiedSafetensorsLoader(model_path, low_memory=True) as loader:
+                metadata = loader.metadata() or {}
+                state_dict = {key: loader.get_tensor(key) for key in loader.keys()}
 
             arch = metadata.get("modelspec.architecture", "")
             if not arch.startswith("naflexvit_so400m_patch16_siglip"):
