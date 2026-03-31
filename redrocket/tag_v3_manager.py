@@ -1,10 +1,12 @@
 import gc
 import os
 import traceback
-from typing import Callable, List, Optional, Union, Tuple, Dict, Any, Set
+from fnmatch import fnmatchcase
+from typing import List, Tuple, Dict, Any, Set, Optional
 import requests
 import csv
 from tqdm import tqdm
+import comfy.utils
 from ..helpers.cache import CacheCleanupMethod, ComfyCache
 from ..helpers.config import ComfyExtensionConfig
 from ..helpers.logger import ComfyLogger
@@ -24,10 +26,8 @@ class JtpTagV3Manager(metaclass=Singleton):
     """
     Manager for JTP-3 CSV tags and metadata.
     """
-    def __init__(self, tags_basepath: str, download_progress_callback: Callable[[int, int], None], download_complete_callback: Optional[Callable[[str], None]] = None) -> None:
+    def __init__(self, tags_basepath: str) -> None:
         self.tags_basepath = tags_basepath
-        self.download_progress_callback = download_progress_callback
-        self.download_complete_callback = download_complete_callback
         ComfyCache.set_max_size('tags_v3', 1)
         ComfyCache.set_cachemethod('tags_v3', CacheCleanupMethod.ROUND_ROBIN)
 
@@ -126,6 +126,7 @@ class JtpTagV3Manager(metaclass=Singleton):
                 total_size = int(response.headers.get('content-length', 0))
                 block_size = 1024
 
+                pbar = comfy.utils.ProgressBar(total_size) if total_size > 0 else None
                 with open(dest, 'wb') as file, tqdm(
                     desc=fname,
                     total=total_size,
@@ -138,11 +139,9 @@ class JtpTagV3Manager(metaclass=Singleton):
                         file.write(data)
                         bar.update(len(data))
                         downloaded += len(data)
-                        if cls().download_progress_callback and total_size > 0:
-                            cls().download_progress_callback(int(downloaded / total_size * 100), fname)
+                        if pbar is not None:
+                            pbar.update_absolute(downloaded, total_size)
 
-                if cls().download_complete_callback:
-                    cls().download_complete_callback(fname)
             except Exception as e:
                 ComfyLogger().log(f"Failed to download {fname}: {e}\n{traceback.format_exc()}", "ERROR", True)
                 return False
@@ -165,7 +164,21 @@ class JtpTagV3Manager(metaclass=Singleton):
         if not metadata:
             return "", {}
 
-        corrected_excluded_tags = {tag.replace("_", " ").strip() for tag in exclude_tags.split(",") if tag.strip()}
+        # Build exclusion sets (normalised to spaces for matching).
+        # Entries containing '*' are glob-style wildcard patterns;
+        # everything else is an exact-match entry.
+        excluded_exact: Set[str] = set()
+        excluded_wildcards: List[str] = []
+        if exclude_tags:
+            for t in exclude_tags.split(","):
+                t = t.strip()
+                if not t:
+                    continue
+                normalised = t.replace("_", " ")
+                if "*" in normalised:
+                    excluded_wildcards.append(normalised)
+                else:
+                    excluded_exact.add(normalised)
 
         # Parse exclude categories
         excluded_cats = set()
@@ -224,9 +237,11 @@ class JtpTagV3Manager(metaclass=Singleton):
             # But the user might input "blue sky" or "blue_sky".
             # We should normalize to match.
 
-            # Check if tag (normalized) is in excluded set
+            # Check if tag (normalised) is excluded (exact match or wildcard)
             tag_check = tag.replace("_", " ")
-            if tag_check in corrected_excluded_tags:
+            if tag_check in excluded_exact:
+                continue
+            if excluded_wildcards and any(fnmatchcase(tag_check, p) for p in excluded_wildcards):
                 continue
 
             filtered_labels[tag] = prob

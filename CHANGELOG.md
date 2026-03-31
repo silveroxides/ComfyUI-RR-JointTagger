@@ -41,3 +41,13 @@ If you want to read my dribble as I update this code.  Go on.
 - Touched some Grass, whips and chains.
 
 --------------
+
+## Update: Wildcard Exclusions
+### **1.2.0** - ``2026-03-31``
+
+- Add glob-style `*` wildcard support to the `exclude_tags` input across all tagger variants (V1/V2, V3, DINOv3).
+- Wildcards work in any position: `human*` (starts with), `*human` (ends with), `*human*` (contains), `human*top` (starts/ends), and any combination.
+- Underscores in patterns are normalised to spaces as before — e.g. `anthro_*` and `anthro *` behave identically.
+- Tags without `*` continue to work as exact matches (fully backward compatible).
+
+--------------

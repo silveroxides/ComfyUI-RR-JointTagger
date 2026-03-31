@@ -2,11 +2,13 @@ import csv
 import gc
 import os
 import traceback
-from typing import Callable, Dict, List, Optional, Set, Tuple, Union
+from fnmatch import fnmatchcase
+from typing import Dict, List, Optional, Set, Tuple, Union
 import msgspec
 import requests
 import torch
 from tqdm import tqdm
+import comfy.utils
 
 from ..helpers.cache import CacheCleanupMethod, ComfyCache
 from ..helpers.config import ComfyExtensionConfig
@@ -28,10 +30,8 @@ class JtpTagManager(metaclass=Singleton):
     """
     The JTP Tag Manager class is a singleton class that manages the loading, unloading, downloading, and installation of JTP Vision Transformer tags.
     """
-    def __init__(self, tags_basepath: str, download_progress_callback: Callable[[int, int], None], download_complete_callback: Optional[Callable[[str], None]] = None) -> None:
+    def __init__(self, tags_basepath: str) -> None:
         self.tags_basepath = tags_basepath
-        self.download_progress_callback = download_progress_callback
-        self.download_complete_callback = download_complete_callback
         ComfyCache.set_max_size('tags', 1)
         ComfyCache.set_cachemethod('tags', CacheCleanupMethod.ROUND_ROBIN)
 
@@ -141,6 +141,7 @@ class JtpTagManager(metaclass=Singleton):
             total_size = int(response.headers.get("content-length", 0))
             block_size = 1024
 
+            pbar = comfy.utils.ProgressBar(total_size) if total_size > 0 else None
             with open(tags_path, "wb") as f, tqdm(
                 desc=f"{tags_name}.json",
                 total=total_size,
@@ -153,14 +154,9 @@ class JtpTagManager(metaclass=Singleton):
                     f.write(chunk)
                     bar.update(len(chunk))
                     downloaded += len(chunk)
-                    if cls().download_progress_callback and total_size > 0:
-                        cls().download_progress_callback(
-                            int(downloaded / total_size * 100),
-                            f"{tags_name}.json",
-                        )
+                    if pbar is not None:
+                        pbar.update_absolute(downloaded, total_size)
 
-            if cls().download_complete_callback:
-                cls().download_complete_callback(tags_name)
             return True
         except Exception as err:
             ComfyLogger().log(
@@ -276,6 +272,7 @@ class JtpTagManager(metaclass=Singleton):
             total_size = int(response.headers.get("content-length", 0))
             block_size = 1024
 
+            pbar = comfy.utils.ProgressBar(total_size) if total_size > 0 else None
             with open(dest, "wb") as f, tqdm(
                 desc=f"{model_name}-tags.csv",
                 total=total_size,
@@ -288,14 +285,9 @@ class JtpTagManager(metaclass=Singleton):
                     f.write(chunk)
                     bar.update(len(chunk))
                     downloaded += len(chunk)
-                    if cls().download_progress_callback and total_size > 0:
-                        cls().download_progress_callback(
-                            int(downloaded / total_size * 100),
-                            f"{model_name}-tags.csv",
-                        )
+                    if pbar is not None:
+                        pbar.update_absolute(downloaded, total_size)
 
-            if cls().download_complete_callback:
-                cls().download_complete_callback(f"{model_name}-tags.csv")
             return True
 
         except Exception as e:
@@ -436,13 +428,21 @@ class JtpTagManager(metaclass=Singleton):
 
         # --- Filtering ---
 
-        # Build exclusion set (normalised to spaces for matching)
-        excluded: Set[str] = set()
+        # Build exclusion sets (normalised to spaces for matching).
+        # Entries containing '*' are glob-style wildcard patterns;
+        # everything else is an exact-match entry.
+        excluded_exact: Set[str] = set()
+        excluded_wildcards: List[str] = []
         if exclude_tags:
             for t in exclude_tags.split(","):
                 t = t.strip()
-                if t:
-                    excluded.add(t.replace("_", " "))
+                if not t:
+                    continue
+                normalised = t.replace("_", " ")
+                if "*" in normalised:
+                    excluded_wildcards.append(normalised)
+                else:
+                    excluded_exact.add(normalised)
 
         # Parse excluded categories
         excluded_cats: Set[int] = set()
@@ -459,8 +459,10 @@ class JtpTagManager(metaclass=Singleton):
             if prob <= threshold:
                 continue
 
-            # Exclude by tag name
-            if tag in excluded:
+            # Exclude by tag name (exact match or wildcard)
+            if tag in excluded_exact:
+                continue
+            if excluded_wildcards and any(fnmatchcase(tag, p) for p in excluded_wildcards):
                 continue
 
             # Exclude by category
