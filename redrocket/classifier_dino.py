@@ -46,6 +46,7 @@ class DINOv3Inference:
         seed: int = 0,
         category_config: Optional[Dict[str, Any]] = None,
         check_updates: bool = False,
+        keep_model_loaded: bool = False,
     ) -> Tuple[str, Dict[str, float]]:
         """Run the full DINOv3 tagging pipeline on a single image.
 
@@ -280,11 +281,16 @@ class DINOv3Inference:
         )
 
         # ----------------------------------------------------------
-        # 7. Offload model to free GPU memory
+        # 7. Memory management based on keep_model_loaded toggle
         # ----------------------------------------------------------
-        offload_device = mm.unet_offload_device()
-        model.to(offload_device)
-        mm.soft_empty_cache()
+        if keep_model_loaded:
+            # Offload model from GPU to CPU (RAM) — keep cached for fast reuse
+            model.to(torch.device("cpu"))
+            mm.soft_empty_cache()
+        else:
+            # Fully unload: drop local ref, flush cache, GC, free VRAM
+            del model
+            DINOv3ModelManager.unload(model_name)
 
         # ----------------------------------------------------------
         # 8. Cache result

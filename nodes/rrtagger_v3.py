@@ -43,6 +43,7 @@ class Jtp3HydraTagger(ComfyNodeABC):
             "cam_tag": (IO.STRING, {"default": "", "tooltip": "Tag to visualize when cam_mode is 'specific_tag'."}),
             "replace_underscore": (IO.BOOLEAN, {"default": True, "tooltip": "Replace underscores with spaces in tags."}),
             "trailing_comma": (IO.BOOLEAN, {"default": False, "tooltip": "Add a trailing comma to the tag string."}),
+            "keep_model_loaded": (IO.BOOLEAN, {"default": False, "tooltip": "If True, keep the model in RAM between runs for faster repeat inference. If False, fully unload after each run to free RAM."}),
         }}
 
     RETURN_TYPES: Tuple[str] = (IO.STRING, IO.STRING, IO.IMAGE)
@@ -67,7 +68,8 @@ class Jtp3HydraTagger(ComfyNodeABC):
             cam_mode: str = "auto",
             cam_tag: str = "",
             replace_underscore: bool = True,
-            trailing_comma: bool = False) -> Dict[str, Any]:
+            trailing_comma: bool = False,
+            keep_model_loaded: bool = False) -> Dict[str, Any]:
 
         device = comfy.model_management.get_torch_device()
         torch.manual_seed(seed)
@@ -99,7 +101,8 @@ class Jtp3HydraTagger(ComfyNodeABC):
                 replace_underscore=replace_underscore,
                 trailing_comma=trailing_comma,
                 cam_mode=cam_mode,
-                cam_tag=cam_tag
+                cam_tag=cam_tag,
+                keep_model_loaded=keep_model_loaded
             )
 
             tags_list.append(tags_str)

@@ -124,7 +124,8 @@ class JtpInferenceV3:
         replace_underscore: bool = True,
         trailing_comma: bool = False,
         cam_mode: str = "auto",
-        cam_tag: str = ""
+        cam_tag: str = "",
+        keep_model_loaded: bool = False
     ) -> Tuple[str, Dict[str, float], Optional[Image.Image]]:
 
         # Hash params for caching
@@ -280,9 +281,14 @@ class JtpInferenceV3:
 
         JtpImageV3Manager.commit_cache(image_key, (tag_str, final_scores, cam_image), params_key)
 
-        # Offload model to free GPU memory
-        offload_device = mm.unet_offload_device()
-        model.to(offload_device)
-        mm.soft_empty_cache()
+        # Memory management based on keep_model_loaded toggle
+        if keep_model_loaded:
+            # Offload model from GPU to CPU (RAM) — keep cached for fast reuse
+            model.to(torch.device("cpu"))
+            mm.soft_empty_cache()
+        else:
+            # Fully unload: drop local ref, flush cache, GC, free VRAM
+            del model
+            JtpModelV3Manager.unload(model_name)
 
         return tag_str, final_scores, cam_image

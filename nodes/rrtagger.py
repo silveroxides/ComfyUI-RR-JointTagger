@@ -99,6 +99,7 @@ class RRJointTagger(ComfyNodeABC):
             "prefix": (IO.STRING, {"default": "", "tooltip": "Text to prepend to the tags output."}),
             "replace_underscore": (IO.BOOLEAN, {"default": True, "tooltip": "Replace underscores with spaces in tags."}),
             "trailing_comma": (IO.BOOLEAN, {"default": False, "tooltip": "Add a trailing comma to the tag string."}),
+            "keep_model_loaded": (IO.BOOLEAN, {"default": False, "tooltip": "If True, keep the model in RAM between runs for faster repeat inference. If False, fully unload after each run to free RAM."}),
             "seed": (IO.INT, {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
         }}
 
@@ -112,6 +113,7 @@ class RRJointTagger(ComfyNodeABC):
     def tag(self, image: Image.Image, model: str, steps: int, threshold: float, seed: int,
             exclude_tags: str = "", exclude_categories: str = "", prefix: str = "",
             replace_underscore: bool = True, trailing_comma: bool = False,
+            keep_model_loaded: bool = False,
             implications_mode: str = "off") -> Dict[str, Any]:
         model_name = ComfyExtensionConfig().get_model_from_name(model)
         tags_name = ComfyExtensionConfig().get_tags_from_name(model)
@@ -140,6 +142,7 @@ class RRJointTagger(ComfyNodeABC):
                 implications_mode=implications_mode,
                 exclude_categories=exclude_categories,
                 prefix=prefix,
+                keep_model_loaded=keep_model_loaded,
             )
             tags.append(tags_t)
             scores.append(scores_t)

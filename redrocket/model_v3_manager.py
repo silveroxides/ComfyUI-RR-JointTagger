@@ -7,6 +7,7 @@ import torch
 from unifiedefficientloader import UnifiedSafetensorsLoader
 from torch.nn import Identity, Linear
 from tqdm import tqdm
+import comfy.model_management as mm
 import comfy.utils
 
 from ..helpers.cache import CacheCleanupMethod, ComfyCache
@@ -107,6 +108,17 @@ class JtpModelV3Manager(metaclass=Singleton):
         except Exception as e:
             ComfyLogger().log(message=f"Error loading model {model_name}: {e}\n{traceback.format_exc()}", type="ERROR", always=True)
             return False, []
+
+    @classmethod
+    def unload(cls, model_name: str) -> bool:
+        """Unload a JTP-3 Hydra model from memory."""
+        if not cls.is_loaded(model_name):
+            ComfyLogger().log(message=f"JTP-3 model {model_name} not loaded, nothing to do here", type="WARNING", always=True)
+            return True
+        ComfyCache.flush(f'model_v3.{model_name}')
+        gc.collect()
+        mm.soft_empty_cache()
+        return True
 
     @classmethod
     def is_installed(cls, model_name: str) -> bool:

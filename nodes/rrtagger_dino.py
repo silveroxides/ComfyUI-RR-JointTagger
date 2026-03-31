@@ -97,6 +97,7 @@ class DINOv3Tagger(ComfyNodeABC):
                 "exclude_categories": (IO.STRING, {"multiline": True, "tooltip": "Comma-separated categories to exclude: unassigned, general, artist, contributor, copyright, character, species/meta (or species), disambiguation, meta, lore."}),
                 "trailing_comma": (IO.BOOLEAN, {"default": False, "tooltip": "Add a trailing comma to the tag string."}),
                 "prefix": (IO.STRING, {"default": "", "tooltip": "Text to prepend to the tags output."}),
+                "keep_model_loaded": (IO.BOOLEAN, {"default": False, "tooltip": "If True, keep the model in RAM between runs for faster repeat inference. If False, fully unload after each run to free RAM."}),
                 "seed": (IO.INT, {"default": 0, "min": 0, "max": 0xffffffffffffffff, "tooltip": "Seed for deterministic execution."}),
             },
             "optional": {
@@ -127,6 +128,7 @@ class DINOv3Tagger(ComfyNodeABC):
         exclude_categories: str = "",
         trailing_comma: bool = False,
         prefix: str = "",
+        keep_model_loaded: bool = False,
         category_config: Optional[Dict[str, Any]] = None,
         check_updates: bool = False,
     ) -> Dict[str, Any]:
@@ -160,6 +162,7 @@ class DINOv3Tagger(ComfyNodeABC):
                 seed=seed,
                 category_config=category_config,
                 check_updates=check_updates,
+                keep_model_loaded=keep_model_loaded,
             )
 
             tags_list.append(tag_str)

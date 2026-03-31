@@ -12,6 +12,7 @@ import requests
 import torch
 from unifiedefficientloader import UnifiedSafetensorsLoader
 from tqdm import tqdm
+import comfy.model_management as mm
 import comfy.utils
 
 from ..helpers.cache import CacheCleanupMethod, ComfyCache
@@ -49,6 +50,20 @@ class DINOv3ModelManager(metaclass=Singleton):
             ComfyCache.get(f"model_dino.{model_name}") is not None
             and ComfyCache.get(f"model_dino.{model_name}.model") is not None
         )
+
+    @classmethod
+    def unload(cls, model_name: str) -> bool:
+        """Unload a DINOv3 Tagger model from memory."""
+        if not cls.is_loaded(model_name):
+            ComfyLogger().log(
+                f"DINOv3 model {model_name} not loaded, nothing to do here",
+                type="WARNING", always=True,
+            )
+            return True
+        ComfyCache.flush(f"model_dino.{model_name}")
+        gc.collect()
+        mm.soft_empty_cache()
+        return True
 
     @classmethod
     def is_installed(cls, model_name: str) -> bool:

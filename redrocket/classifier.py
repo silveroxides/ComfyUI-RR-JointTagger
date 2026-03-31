@@ -31,6 +31,7 @@ class JtpInference:
         implications_mode: str = "off",
         exclude_categories: str = "",
         prefix: str = "",
+        keep_model_loaded: bool = False,
     ) -> Tuple[str, Dict[str, float]]:
         from ..helpers.logger import ComfyLogger
 
@@ -95,10 +96,15 @@ class JtpInference:
             else:
                 ComfyLogger().log(message=f"Model version {model_version} not supported", type="ERROR", always=True)
                 return "", {}
-        # Offload model to free GPU memory
-        offload_device = mm.unet_offload_device()
-        model_data.to(offload_device)
-        mm.soft_empty_cache()
+        # Memory management based on keep_model_loaded toggle
+        if keep_model_loaded:
+            # Offload model from GPU to CPU (RAM) — keep cached for fast reuse
+            model_data.to(torch.device("cpu"))
+            mm.soft_empty_cache()
+        else:
+            # Fully unload: drop local ref, flush cache, GC, free VRAM
+            del model_data
+            JtpModelManager.unload(model_name)
 
         ComfyLogger().log(message="Processing tags...", type="DEBUG", always=True)
         tags_str, tag_scores = JtpTagManager().process_tags(
