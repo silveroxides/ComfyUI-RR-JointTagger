@@ -25,6 +25,18 @@ TAG_CATEGORIES = {
     "lore": 8,
 }
 
+# Reverse lookup: category ID → canonical config key name.
+# Used by per-category selection to map from metadata category IDs to the
+# config dict keys produced by RRCategoryConfig.
+CATEGORY_ID_TO_NAME: Dict[int, str] = {
+    0: "general",
+    3: "copyright",
+    4: "character",
+    5: "species",
+    7: "meta",
+    8: "lore",
+}
+
 
 class JtpTagManager(metaclass=Singleton):
     """
@@ -314,6 +326,7 @@ class JtpTagManager(metaclass=Singleton):
         implications_mode: str = "off",
         exclude_categories: str = "",
         prefix: str = "",
+        max_tags: int = 0,
     ) -> Tuple[str, Dict[str, float]]:
         """Process raw model output into a formatted tag string and scores dict.
 
@@ -339,6 +352,9 @@ class JtpTagManager(metaclass=Singleton):
             (e.g. ``"copyright, character, meta"``).
         prefix:
             Text to prepend to the tag string.
+        max_tags:
+            Maximum number of tags in the final output (applied after
+            implications and exclusions).  0 means unlimited.
         """
         from ..helpers.logger import ComfyLogger
 
@@ -484,6 +500,10 @@ class JtpTagManager(metaclass=Singleton):
 
         # --- Format output ---
         sorted_items = sorted(filtered.items(), key=lambda x: x[1], reverse=True)
+
+        # Apply max_tags cap
+        if max_tags > 0:
+            sorted_items = sorted_items[:max_tags]
 
         tag_list: List[str] = []
         scores_dict: Dict[str, float] = {}

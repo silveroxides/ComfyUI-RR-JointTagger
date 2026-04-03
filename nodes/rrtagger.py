@@ -84,23 +84,81 @@ def filter_tags(input_tags_str: str, remove_tags_str: str) -> str:
   #    - Join the filtered tags with ", " as the separator.
   return ", ".join(filtered_tags)
 
+# Custom ComfyUI type for the per-category config dict.
+RR_CATEGORY_CONFIG_TYPE = "RR_CATEGORY_CONFIG"
+
+# Canonical category names used as config-key prefixes.
+_CATEGORY_KEYS: List[str] = [
+    "general",
+    "copyright",
+    "character",
+    "species",
+    "meta",
+    "lore",
+]
+
+
+class RRCategoryConfig(ComfyNodeABC):
+    """Supplementary node that outputs per-category topk/threshold settings.
+
+    Connect its output to the *category_config* optional input on the
+    **RedRocket Tagger** node.  Any category left at the defaults
+    (``topk=0, threshold=0.0``) will use the tagger's global settings.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls) -> Dict[str, Any]:
+        inputs: Dict[str, Any] = {}
+        for cat in _CATEGORY_KEYS:
+            inputs[f"{cat}_topk"] = (IO.INT, {
+                "default": 0, "min": 0, "max": 500, "step": 1,
+                "tooltip": f"Top-K for '{cat}'. 0 with threshold 0.0 = use global.",
+            })
+            inputs[f"{cat}_threshold"] = (IO.FLOAT, {
+                "default": 0.0, "min": 0.0, "max": 0.99, "step": 0.01,
+                "tooltip": f"Threshold for '{cat}'. 0.0 with topk 0 = use global.",
+            })
+        return {"required": inputs}
+
+    RETURN_TYPES: Tuple[str, ...] = (RR_CATEGORY_CONFIG_TYPE,)
+    RETURN_NAMES: Tuple[str, ...] = ("category_config",)
+    FUNCTION: str = "configure"
+    CATEGORY: str = "🐺 Furry Diffusion"
+
+    def configure(self, **kwargs: Any) -> Tuple[Dict[str, Any]]:
+        """Pack all per-category values into a single dict."""
+        config: Dict[str, Any] = {}
+        for cat in _CATEGORY_KEYS:
+            config[f"{cat}_topk"] = kwargs.get(f"{cat}_topk", 0)
+            config[f"{cat}_threshold"] = kwargs.get(f"{cat}_threshold", 0.0)
+        return (config,)
+
+
 class RRJointTagger(ComfyNodeABC):
     @classmethod
     def INPUT_TYPES(cls) -> Dict[str, Any]:
         models: List[str] =  [v["name"] for k, v in ComfyExtensionConfig().get(property="models").items()]
-        return {"required": {
-            "image": (IO.IMAGE, ),
-            "model": (models, {"default": ComfyExtensionConfig().get(property="rrtagger_settings.model")}),
-            "steps": (IO.INT, {"default": 255, "min": 1, "max": 500, "display": "slider"}),
-            "threshold": (IO.FLOAT, {"default": 0.35, "min": 0.0, "max": 1.0, "step": 0.05, "display": "slider"}),
-            "implications_mode": (["inherit", "constrain", "remove", "constrain-remove", "off"], {"default": "off", "tooltip": "How to handle implied tags (e.g. if 'cat' is present, 'feline' is implied). Requires JTP-3 metadata CSV."}),
-            "exclude_tags": (IO.STRING, {"multiline": True, "tooltip": "Comma-separated tags to exclude. Supports * wildcards: human* (starts with), *human (ends with), *human* (contains), human*top (starts/ends)."}),
-            "exclude_categories": (IO.STRING, {"multiline": True, "tooltip": "Comma separated categories to exclude (e.g. copyright, character, species, meta, lore)."}),
-            "prefix": (IO.STRING, {"default": "", "tooltip": "Text to prepend to the tags output."}),
-            "replace_underscore": (IO.BOOLEAN, {"default": True, "tooltip": "Replace underscores with spaces in tags."}),
-            "trailing_comma": (IO.BOOLEAN, {"default": False, "tooltip": "Add a trailing comma to the tag string."}),
-            "seed": (IO.INT, {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-        }}
+        return {
+            "required": {
+                "image": (IO.IMAGE, ),
+                "model": (models, {"default": ComfyExtensionConfig().get(property="rrtagger_settings.model")}),
+                "steps": (IO.INT, {"default": 255, "min": 1, "max": 500, "display": "slider"}),
+                "mode": (["topk", "threshold"], {"default": "topk", "tooltip": "Tag selection mode. 'topk' returns the top K tags; 'threshold' returns all tags above a score. Threshold always acts as a minimum score floor in both modes."}),
+                "topk": (IO.INT, {"default": 40, "min": 1, "max": 500, "step": 1, "display": "slider", "tooltip": "Number of top tags to return (when mode is 'topk')."}),
+                "threshold": (IO.FLOAT, {"default": 0.35, "min": 0.0, "max": 1.0, "step": 0.05, "display": "slider"}),
+                "max_tags": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Maximum number of tags in the final output (applied after implications). 0 = unlimited."}),
+                "implications_mode": (["inherit", "constrain", "remove", "constrain-remove", "off"], {"default": "off", "tooltip": "How to handle implied tags (e.g. if 'cat' is present, 'feline' is implied). Requires JTP-3 metadata CSV."}),
+                "exclude_tags": (IO.STRING, {"multiline": True, "tooltip": "Comma-separated tags to exclude. Supports * wildcards: human* (starts with), *human (ends with), *human* (contains), human*top (starts/ends)."}),
+                "exclude_categories": (IO.STRING, {"multiline": True, "tooltip": "Comma separated categories to exclude (e.g. copyright, character, species, meta, lore)."}),
+                "prefix": (IO.STRING, {"default": "", "tooltip": "Text to prepend to the tags output."}),
+                "replace_underscore": (IO.BOOLEAN, {"default": True, "tooltip": "Replace underscores with spaces in tags."}),
+                "trailing_comma": (IO.BOOLEAN, {"default": False, "tooltip": "Add a trailing comma to the tag string."}),
+                "seed": (IO.INT, {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+            },
+            "optional": {
+                "category_config": (RR_CATEGORY_CONFIG_TYPE, {"tooltip": "Per-category topk/threshold overrides from the RR Category Config node."}),
+            },
+        }
 
     RETURN_TYPES: Tuple[str] = (IO.STRING, IO.STRING,)
     RETURN_NAMES: Tuple[str] = ("tags", "scores",)
@@ -109,10 +167,12 @@ class RRJointTagger(ComfyNodeABC):
     OUTPUT_NODE: bool = True
     CATEGORY: str = "🐺 Furry Diffusion"
 
-    def tag(self, image: Image.Image, model: str, steps: int, threshold: float, seed: int,
+    def tag(self, image: Image.Image, model: str, steps: int, mode: str, topk: int,
+            threshold: float, max_tags: int, seed: int,
             exclude_tags: str = "", exclude_categories: str = "", prefix: str = "",
             replace_underscore: bool = True, trailing_comma: bool = False,
-            implications_mode: str = "off") -> Dict[str, Any]:
+            implications_mode: str = "off",
+            category_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         model_name = ComfyExtensionConfig().get_model_from_name(model)
         tags_name = ComfyExtensionConfig().get_tags_from_name(model)
         device_type = comfy.model_management.get_torch_device()
@@ -140,6 +200,10 @@ class RRJointTagger(ComfyNodeABC):
                 implications_mode=implications_mode,
                 exclude_categories=exclude_categories,
                 prefix=prefix,
+                mode=mode,
+                topk=topk,
+                max_tags=max_tags,
+                category_config=category_config,
             )
             tags.append(tags_t)
             scores.append(scores_t)
@@ -151,7 +215,9 @@ JtpTagManager(tags_basepath=tags_basepath)
 
 NODE_CLASS_MAPPINGS: Dict[str, Any] = {
     "RRJointTagger|redrocket": RRJointTagger,
+    "RRCategoryConfig|redrocket": RRCategoryConfig,
 }
 NODE_DISPLAY_NAME_MAPPINGS: Dict[str, str] = {
     "RRJointTagger|redrocket": "RedRocket Tagger 🐺",
+    "RRCategoryConfig|redrocket": "RR Category Config 🐺",
 }

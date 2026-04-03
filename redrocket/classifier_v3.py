@@ -1,3 +1,4 @@
+from collections import defaultdict
 from pathlib import Path
 from PIL import Image
 import numpy as np
@@ -8,7 +9,7 @@ from torch.nn import Parameter
 import comfy.model_management as mm
 
 from .image_v3_manager import JtpImageV3Manager
-from .tag_v3_manager import JtpTagV3Manager
+from .tag_v3_manager import CATEGORY_ID_TO_NAME, JtpTagV3Manager
 from .model_v3_manager import JtpModelV3Manager
 from ..helpers.cache import ComfyCache
 from ..helpers.logger import ComfyLogger
@@ -124,11 +125,18 @@ class JtpInferenceV3:
         replace_underscore: bool = True,
         trailing_comma: bool = False,
         cam_mode: str = "auto",
-        cam_tag: str = ""
+        cam_tag: str = "",
+        mode: str = "topk",
+        topk: int = 40,
+        max_tags: int = 0,
+        category_config: Optional[Dict[str, Any]] = None,
     ) -> Tuple[str, Dict[str, float], Optional[Image.Image]]:
 
         # Hash params for caching
-        params_string = f"{model_name}|{threshold}|{cam_depth}|{seqlen}|{implications_mode}|{exclude_tags}|{exclude_categories}|{prefix}|{original_tags}|{seed}|{replace_underscore}|{trailing_comma}|{cam_mode}|{cam_tag}"
+        cc_hash = ""
+        if category_config:
+            cc_hash = "|".join(f"{k}={v}" for k, v in sorted(category_config.items()))
+        params_string = f"{model_name}|{threshold}|{cam_depth}|{seqlen}|{implications_mode}|{exclude_tags}|{exclude_categories}|{prefix}|{original_tags}|{seed}|{replace_underscore}|{trailing_comma}|{cam_mode}|{cam_tag}|{mode}|{topk}|{max_tags}|{cc_hash}"
         params_key = hashlib.sha256(params_string.encode()).hexdigest()
 
         # Load Model
@@ -197,11 +205,50 @@ class JtpInferenceV3:
                 )
             }
 
+        # ----------------------------------------------------------
+        # Top-K + threshold selection
+        # ----------------------------------------------------------
+        metadata = ComfyCache.get(f'tags_v3.{model_name}')
+
+        # Check if per-category selection should be used
+        use_per_cat = (
+            category_config is not None
+            and metadata is not None
+            and any(
+                category_config.get(f"{cat}_topk", 0) != 0
+                or category_config.get(f"{cat}_threshold", 0.0) != 0.0
+                for cat in CATEGORY_ID_TO_NAME.values()
+            )
+        )
+
+        if use_per_cat:
+            predictions = cls._per_category_select(
+                predictions=predictions,
+                metadata=metadata,
+                category_config=category_config,
+                global_mode=mode,
+                global_topk=topk,
+                global_threshold=threshold,
+            )
+            # Use a very low threshold so process_tags doesn't re-filter
+            effective_threshold = -2.0
+        else:
+            # Global selection: apply mode-based filtering on predictions
+            if mode == "topk":
+                # Filter by threshold first, then cap to topk
+                filtered = {t: s for t, s in predictions.items() if s >= threshold}
+                sorted_preds = sorted(filtered.items(), key=lambda x: x[1], reverse=True)
+                predictions = dict(sorted_preds[:topk])
+                effective_threshold = -2.0  # Already filtered
+            else:
+                effective_threshold = threshold
+
         # Process tags (Implications, Thresholding)
         tag_str, final_scores, top_tag_raw = JtpTagV3Manager.process_tags(
-            predictions, model_name, threshold, implications_mode, exclude_tags,
+            predictions, model_name, effective_threshold, implications_mode, exclude_tags,
             exclude_categories, prefix, original_tags,
-            replace_underscore=replace_underscore, trailing_comma=trailing_comma
+            replace_underscore=replace_underscore, trailing_comma=trailing_comma,
+            max_tags=max_tags
         )
 
         cam_image = None
@@ -286,3 +333,66 @@ class JtpInferenceV3:
         mm.soft_empty_cache()
 
         return tag_str, final_scores, cam_image
+
+    # ------------------------------------------------------------------
+    # Per-category tag selection
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _per_category_select(
+        predictions: Dict[str, float],
+        metadata: Dict[str, Tuple],
+        category_config: Dict[str, Any],
+        global_mode: str,
+        global_topk: int,
+        global_threshold: float,
+    ) -> Dict[str, float]:
+        """Select tags using per-category topk/threshold overrides.
+
+        Groups predictions by category (from metadata CSV), then applies
+        per-category settings from *category_config*.  Categories where
+        both topk and threshold are 0 fall back to global settings.
+
+        Returns a filtered predictions dict.
+        """
+        # Group predictions by category ID
+        groups: Dict[int, List[Tuple[str, float]]] = defaultdict(list)
+        for tag, score in predictions.items():
+            cat_id = metadata[tag][0] if tag in metadata else 0
+            groups[cat_id].append((tag, score))
+
+        result: Dict[str, float] = {}
+
+        for cat_id, tag_scores in groups.items():
+            cat_name = CATEGORY_ID_TO_NAME.get(cat_id, "general")
+            cat_topk = category_config.get(f"{cat_name}_topk", 0)
+            cat_threshold = category_config.get(f"{cat_name}_threshold", 0.0)
+
+            # Determine effective settings for this category
+            if cat_topk == 0 and cat_threshold == 0.0:
+                # Use global settings
+                eff_threshold = global_threshold
+                eff_topk = global_topk if global_mode == "topk" else 0
+            elif cat_topk == 0:
+                # Threshold-only mode for this category
+                eff_threshold = cat_threshold
+                eff_topk = 0
+            else:
+                # TopK mode for this category, threshold as floor
+                eff_threshold = cat_threshold if cat_threshold > 0.0 else global_threshold
+                eff_topk = cat_topk
+
+            # Sort by score descending
+            tag_scores.sort(key=lambda x: x[1], reverse=True)
+
+            # Apply threshold
+            filtered = [(t, s) for t, s in tag_scores if s >= eff_threshold]
+
+            # Apply topk cap
+            if eff_topk > 0:
+                filtered = filtered[:eff_topk]
+
+            for t, s in filtered:
+                result[t] = s
+
+        return result
