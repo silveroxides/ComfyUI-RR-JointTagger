@@ -126,14 +126,17 @@ class JtpInference:
         )
 
         if use_per_cat:
-            # Build tag list from top-250 for per-category filtering
+            # Build tag list and reverse lookup from tag vocabulary
             tags_data = ComfyCache.get(f'tags.{tags_name}.tags')
             idx2tag: List[str] = [""] * len(tags_data) if tags_data else []
+            tag_to_idx: Dict[str, int] = {}
             if tags_data:
                 for key, val in tags_data.items():
+                    idx = int(val)
                     tag = key.replace("_", " ")
-                    if val < len(idx2tag):
-                        idx2tag[val] = tag
+                    if idx < len(idx2tag):
+                        idx2tag[idx] = tag
+                        tag_to_idx[tag] = idx
 
             raw_results = cls._per_category_select(
                 values=values,
@@ -147,15 +150,15 @@ class JtpInference:
             )
 
             # Convert raw_results back to tensors for process_tags
-            # We re-build values/indices from the selected results
             if raw_results:
                 sel_indices = torch.tensor(
-                    [list(tags_data.values())[list(tags_data.keys()).index(
-                        next(k for k, v_map in tags_data.items() if k.replace("_", " ") == tag)
-                    )] for tag, _ in raw_results],
+                    [tag_to_idx[tag] for tag, _ in raw_results if tag in tag_to_idx],
                     dtype=torch.long,
                 )
-                sel_values = torch.tensor([s for _, s in raw_results], dtype=torch.float32)
+                sel_values = torch.tensor(
+                    [s for tag, s in raw_results if tag in tag_to_idx],
+                    dtype=torch.float32,
+                )
             else:
                 sel_indices = torch.tensor([], dtype=torch.long)
                 sel_values = torch.tensor([], dtype=torch.float32)
