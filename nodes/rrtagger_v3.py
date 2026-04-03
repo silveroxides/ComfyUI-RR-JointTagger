@@ -1,4 +1,4 @@
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Optional, Tuple, List
 import torch
 import numpy as np
 from PIL import Image
@@ -14,36 +14,89 @@ from ..helpers.config import ComfyExtensionConfig
 import os
 import folder_paths
 
+# Custom ComfyUI type for the per-category config dict.
+JTP3_CATEGORY_CONFIG_TYPE = "JTP3_CATEGORY_CONFIG"
+
+# Canonical category names used as config-key prefixes.
+_CATEGORY_KEYS: List[str] = [
+    "general",
+    "copyright",
+    "character",
+    "species",
+    "meta",
+    "lore",
+]
+
+
+class JTP3CategoryConfig(ComfyNodeABC):
+    """Supplementary node that outputs per-category topk/threshold settings.
+
+    Connect its output to the *category_config* optional input on the
+    **JTP-3 Hydra Tagger** node.  Any category left at the defaults
+    (``topk=0, threshold=0.0``) will use the tagger's global settings.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls) -> Dict[str, Any]:
+        inputs: Dict[str, Any] = {}
+        for cat in _CATEGORY_KEYS:
+            inputs[f"{cat}_topk"] = (IO.INT, {
+                "default": 0, "min": 0, "max": 500, "step": 1,
+                "tooltip": f"Top-K for '{cat}'. 0 with threshold 0.0 = use global.",
+            })
+            inputs[f"{cat}_threshold"] = (IO.FLOAT, {
+                "default": 0.0, "min": -1.0, "max": 0.99, "step": 0.01,
+                "tooltip": f"Threshold for '{cat}'. 0.0 with topk 0 = use global.",
+            })
+        return {"required": inputs}
+
+    RETURN_TYPES: Tuple[str, ...] = (JTP3_CATEGORY_CONFIG_TYPE,)
+    RETURN_NAMES: Tuple[str, ...] = ("category_config",)
+    FUNCTION: str = "configure"
+    CATEGORY: str = "🐺 Furry Diffusion"
+
+    def configure(self, **kwargs: Any) -> Tuple[Dict[str, Any]]:
+        """Pack all per-category values into a single dict."""
+        config: Dict[str, Any] = {}
+        for cat in _CATEGORY_KEYS:
+            config[f"{cat}_topk"] = kwargs.get(f"{cat}_topk", 0)
+            config[f"{cat}_threshold"] = kwargs.get(f"{cat}_threshold", 0.0)
+        return (config,)
+
+
 class Jtp3HydraTagger(ComfyNodeABC):
     @classmethod
     def INPUT_TYPES(cls) -> Dict[str, Any]:
-        # Models list from config or manager
-        # We need to initialize manager to list installed, or check config
-        # Ideally we list installed + available in config?
-        # JtpModelV3Manager list_installed only lists files.
-        # We should use config keys for dropdown?
         config = ComfyExtensionConfig().get()
         models = list(config.get("models_v3", {}).keys())
         if not models:
             models = ["jtp-3-hydra"] # Default fallback
 
-        return {"required": {
-            "image": (IO.IMAGE, ),
-            "model": (models, {"default": models[0] if models else "jtp-3-hydra"}),
-            "threshold": (IO.FLOAT, {"default": 0.5, "min": -1.0, "max": 1.0, "step": 0.05, "display": "slider"}),
-            "cam_depth": (IO.INT, {"default": 1, "min": 1, "max": 27, "step": 1, "display": "slider", "tooltip": "Depth of the Attention Map overlay. Higher values include more context but may be less precise."}),
-            "seqlen": (IO.INT, {"default": 1024, "min": 64, "max": 2048, "step": 64, "tooltip": "NaFlex sequence length. Determines internal resolution."}),
-            "implications_mode": (["inherit", "constrain", "remove", "constrain-remove", "off"], {"default": "inherit", "tooltip": "How to handle implied tags (e.g. if 'cat' is present, 'feline' is implied)."}),
-            "exclude_tags": (IO.STRING, {"multiline": True, "tooltip": "Comma-separated tags to exclude. Supports * wildcards: human* (starts with), *human (ends with), *human* (contains), human*top (starts/ends)."}),
-            "exclude_categories": (IO.STRING, {"multiline": True, "tooltip": "Comma separated categories to exclude (e.g. artist, copyright, character, species, meta, lore)."}),
-            "prefix": (IO.STRING, {"default": "", "tooltip": "Text to prepend to the tags output."}),
-            "original_tags": (IO.BOOLEAN, {"default": False, "tooltip": "If True, output original e621 tags (e.g. 'vulva'). If False, rewrites them (e.g. 'pussy') compatible with some diffusion models."}),
-            "seed": (IO.INT, {"default": 0, "min": 0, "max": 0xffffffffffffffff, "tooltip": "Seed for deterministic execution (mainly for CAM)."}),
-            "cam_mode": (["auto", "none", "specific_tag"], {"default": "auto", "tooltip": "CAM visualization mode. 'auto' shows top tag."}),
-            "cam_tag": (IO.STRING, {"default": "", "tooltip": "Tag to visualize when cam_mode is 'specific_tag'."}),
-            "replace_underscore": (IO.BOOLEAN, {"default": True, "tooltip": "Replace underscores with spaces in tags."}),
-            "trailing_comma": (IO.BOOLEAN, {"default": False, "tooltip": "Add a trailing comma to the tag string."}),
-        }}
+        return {
+            "required": {
+                "image": (IO.IMAGE, ),
+                "model": (models, {"default": models[0] if models else "jtp-3-hydra"}),
+                "mode": (["topk", "threshold"], {"default": "topk", "tooltip": "Tag selection mode. 'topk' returns the top K tags; 'threshold' returns all tags above a score. Threshold always acts as a minimum score floor in both modes."}),
+                "topk": (IO.INT, {"default": 40, "min": 1, "max": 500, "step": 1, "display": "slider", "tooltip": "Number of top tags to return (when mode is 'topk')."}),
+                "threshold": (IO.FLOAT, {"default": 0.5, "min": -1.0, "max": 1.0, "step": 0.05, "display": "slider"}),
+                "max_tags": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Maximum number of tags in the final output (applied after implications). 0 = unlimited."}),
+                "cam_depth": (IO.INT, {"default": 1, "min": 1, "max": 27, "step": 1, "display": "slider", "tooltip": "Depth of the Attention Map overlay. Higher values include more context but may be less precise."}),
+                "seqlen": (IO.INT, {"default": 1024, "min": 64, "max": 2048, "step": 64, "tooltip": "NaFlex sequence length. Determines internal resolution."}),
+                "implications_mode": (["inherit", "constrain", "remove", "constrain-remove", "off"], {"default": "inherit", "tooltip": "How to handle implied tags (e.g. if 'cat' is present, 'feline' is implied)."}),
+                "exclude_tags": (IO.STRING, {"multiline": True, "tooltip": "Comma-separated tags to exclude. Supports * wildcards: human* (starts with), *human (ends with), *human* (contains), human*top (starts/ends)."}),
+                "exclude_categories": (IO.STRING, {"multiline": True, "tooltip": "Comma separated categories to exclude (e.g. artist, copyright, character, species, meta, lore)."}),
+                "prefix": (IO.STRING, {"default": "", "tooltip": "Text to prepend to the tags output."}),
+                "original_tags": (IO.BOOLEAN, {"default": False, "tooltip": "If True, output original e621 tags (e.g. 'vulva'). If False, rewrites them (e.g. 'pussy') compatible with some diffusion models."}),
+                "seed": (IO.INT, {"default": 0, "min": 0, "max": 0xffffffffffffffff, "tooltip": "Seed for deterministic execution (mainly for CAM)."}),
+                "cam_mode": (["auto", "none", "specific_tag"], {"default": "auto", "tooltip": "CAM visualization mode. 'auto' shows top tag."}),
+                "cam_tag": (IO.STRING, {"default": "", "tooltip": "Tag to visualize when cam_mode is 'specific_tag'."}),
+                "replace_underscore": (IO.BOOLEAN, {"default": True, "tooltip": "Replace underscores with spaces in tags."}),
+                "trailing_comma": (IO.BOOLEAN, {"default": False, "tooltip": "Add a trailing comma to the tag string."}),
+            },
+            "optional": {
+                "category_config": (JTP3_CATEGORY_CONFIG_TYPE, {"tooltip": "Per-category topk/threshold overrides from the JTP-3 Category Config node."}),
+            },
+        }
 
     RETURN_TYPES: Tuple[str] = (IO.STRING, IO.STRING, IO.IMAGE)
     RETURN_NAMES: Tuple[str] = ("tags", "scores", "attention_map")
@@ -55,7 +108,10 @@ class Jtp3HydraTagger(ComfyNodeABC):
     def tag(self,
             image: Image.Image,
             model: str,
+            mode: str,
+            topk: int,
             threshold: float,
+            max_tags: int,
             cam_depth: int,
             seqlen: int,
             implications_mode: str,
@@ -67,7 +123,8 @@ class Jtp3HydraTagger(ComfyNodeABC):
             cam_mode: str = "auto",
             cam_tag: str = "",
             replace_underscore: bool = True,
-            trailing_comma: bool = False) -> Dict[str, Any]:
+            trailing_comma: bool = False,
+            category_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
 
         device = comfy.model_management.get_torch_device()
         torch.manual_seed(seed)
@@ -99,7 +156,11 @@ class Jtp3HydraTagger(ComfyNodeABC):
                 replace_underscore=replace_underscore,
                 trailing_comma=trailing_comma,
                 cam_mode=cam_mode,
-                cam_tag=cam_tag
+                cam_tag=cam_tag,
+                mode=mode,
+                topk=topk,
+                max_tags=max_tags,
+                category_config=category_config,
             )
 
             tags_list.append(tags_str)

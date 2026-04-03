@@ -22,6 +22,18 @@ TAG_CATEGORIES = {
     "lore": 8,
 }
 
+# Reverse lookup: category ID → canonical config key name.
+# Used by per-category selection to map from metadata category IDs to the
+# config dict keys produced by JTP3CategoryConfig.
+CATEGORY_ID_TO_NAME: Dict[int, str] = {
+    0: "general",
+    3: "copyright",
+    4: "character",
+    5: "species",
+    7: "meta",
+    8: "lore",
+}
+
 class JtpTagV3Manager(metaclass=Singleton):
     """
     Manager for JTP-3 CSV tags and metadata.
@@ -158,7 +170,8 @@ class JtpTagV3Manager(metaclass=Singleton):
                      prefix: str = "",
                      original_tags: bool = False,
                      replace_underscore: bool = True,
-                     trailing_comma: bool = False) -> Tuple[str, Dict[str, float], Optional[str]]:
+                     trailing_comma: bool = False,
+                     max_tags: int = 0) -> Tuple[str, Dict[str, float], Optional[str]]:
 
         metadata = ComfyCache.get(f'tags_v3.{model_name}')
         if not metadata:
@@ -258,6 +271,10 @@ class JtpTagV3Manager(metaclass=Singleton):
         sorted_items = sorted(filtered_labels.items(), key=lambda x: x[1], reverse=True)
 
         top_tag_raw = sorted_items[0][0] if sorted_items else None
+
+        # Apply max_tags cap (after extracting top_tag_raw for CAM)
+        if max_tags > 0:
+            sorted_items = sorted_items[:max_tags]
 
         final_tags = {}
         tag_list = []
