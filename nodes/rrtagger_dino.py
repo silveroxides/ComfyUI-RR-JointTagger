@@ -47,17 +47,30 @@ class DINOv3CategoryConfig(ComfyNodeABC):
 
     @classmethod
     def INPUT_TYPES(cls) -> Dict[str, Any]:
-        inputs: Dict[str, Any] = {}
-        for cat in _CATEGORY_KEYS:
-            inputs[f"{cat}_topk"] = (IO.INT, {
-                "default": 0, "min": 0, "max": 500, "step": 1,
-                "tooltip": f"Top-K for '{cat}'. 0 with threshold 0.0 = use global.",
-            })
-            inputs[f"{cat}_threshold"] = (IO.FLOAT, {
-                "default": 0.0, "min": 0.0, "max": 0.99, "step": 0.01,
-                "tooltip": f"Threshold for '{cat}'. 0.0 with topk 0 = use global.",
-            })
-        return {"required": inputs}
+        return {
+            "required": {
+                "unassigned_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'unassigned'. 0 with threshold 0.0 = use global."}),
+                "unassigned_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'unassigned'. 0.0 with topk 0 = use global."}),
+                "general_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'general'. 0 with threshold 0.0 = use global."}),
+                "general_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'general'. 0.0 with topk 0 = use global."}),
+                "artist_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'artist'. 0 with threshold 0.0 = use global."}),
+                "artist_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'artist'. 0.0 with topk 0 = use global."}),
+                "contributor_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'contributor'. 0 with threshold 0.0 = use global."}),
+                "contributor_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'contributor'. 0.0 with topk 0 = use global."}),
+                "copyright_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'copyright'. 0 with threshold 0.0 = use global."}),
+                "copyright_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'copyright'. 0.0 with topk 0 = use global."}),
+                "character_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'character'. 0 with threshold 0.0 = use global."}),
+                "character_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'character'. 0.0 with topk 0 = use global."}),
+                "species_meta_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'species_meta'. 0 with threshold 0.0 = use global."}),
+                "species_meta_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'species_meta'. 0.0 with topk 0 = use global."}),
+                "disambiguation_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'disambiguation'. 0 with threshold 0.0 = use global."}),
+                "disambiguation_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'disambiguation'. 0.0 with topk 0 = use global."}),
+                "meta_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'meta'. 0 with threshold 0.0 = use global."}),
+                "meta_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'meta'. 0.0 with topk 0 = use global."}),
+                "lore_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'lore'. 0 with threshold 0.0 = use global."}),
+                "lore_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'lore'. 0.0 with topk 0 = use global."}),
+            }
+        }
 
     RETURN_TYPES: Tuple[str, ...] = (DINO_CATEGORY_CONFIG_TYPE,)
     RETURN_NAMES: Tuple[str, ...] = ("category_config",)
@@ -89,7 +102,7 @@ class DINOv3Tagger(ComfyNodeABC):
                 "model": (models, {"default": models[0] if models else "tagger-proto"}),
                 "mode": (["topk", "threshold"], {"default": "topk", "tooltip": "Tag selection mode. 'topk' returns the top K tags; 'threshold' returns all tags above a score. Threshold always acts as a minimum score floor in both modes."}),
                 "topk": (IO.INT, {"default": 40, "min": 1, "max": 500, "step": 1, "display": "slider", "tooltip": "Number of top tags to return (when mode is 'topk')."}),
-                "threshold": (IO.FLOAT, {"default": 0.35, "min": 0.01, "max": 0.99, "step": 0.01, "display": "slider", "tooltip": "Minimum score to include a tag. Applied in both modes."}),
+                "threshold": (IO.FLOAT, {"default": 0.35, "min": 0.01, "max": 1.0, "step": 0.01, "display": "slider", "tooltip": "Minimum score to include a tag. Applied in both modes."}),
                 "max_size": (IO.INT, {"default": 1024, "min": 64, "max": 4096, "step": 16, "tooltip": "Long-edge pixel cap. Image is resized to fit, snapped to 16px multiples."}),
                 "implications_mode": (["off", "inherit", "constrain", "remove", "constrain-remove"], {"default": "off", "tooltip": "How to handle implied tags (e.g. if 'cat' is present, 'feline' is implied). Requires tag metadata CSV."}),
                 "max_tags": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Maximum number of tags in the final output (applied after implications). 0 = unlimited."}),

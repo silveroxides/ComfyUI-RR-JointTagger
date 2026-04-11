@@ -100,11 +100,33 @@ class DINOv3Inference:
         params_key = hashlib.sha256(params_string.encode()).hexdigest()
 
         # ----------------------------------------------------------
-        # 1. Ensure vocab is available
+        # 1. Ensure model is available
         # ----------------------------------------------------------
         import os
         tags_basepath = DINOv3TagManager().tags_basepath
 
+        if DINOv3ModelManager.is_installed(model_name):
+            # Check for remote update (once per session, only if enabled)
+            if check_updates:
+                if DINOv3ModelManager.check_for_update(model_name):
+                    # Model updated, clear vocab so it gets re-downloaded
+                    for ext in ["-vocab.json", "-cat-vocab.json", "-tags.csv"]:
+                        p = os.path.join(tags_basepath, f"{model_name}{ext}")
+                        if os.path.exists(p):
+                            try:
+                                os.remove(p)
+                            except Exception as e:
+                                ComfyLogger().log(f"Failed to remove {p}: {e}", "WARNING", True)
+                    # Clear vocab cache
+                    ComfyCache.set(f"tags_dino.{model_name}", None)
+        else:
+            if not DINOv3ModelManager.download(model_name):
+                ComfyLogger().log("DINOv3: failed to download model", "ERROR", True)
+                return "", {}
+
+        # ----------------------------------------------------------
+        # 2. Ensure vocab is available
+        # ----------------------------------------------------------
         if not DINOv3TagManager.is_loaded(model_name):
             # Prefer categorised vocab (gives idx2tag + tag2category)
             cat_vocab_path = os.path.join(
@@ -168,18 +190,7 @@ class DINOv3Inference:
                 DINOv3TagManager.download_metadata(model_name)
             DINOv3TagManager.load_metadata(model_name)
 
-        # ----------------------------------------------------------
-        # 2. Ensure model is available
-        # ----------------------------------------------------------
-        if DINOv3ModelManager.is_installed(model_name):
-            # Check for remote update (once per session, only if enabled)
-            if check_updates:
-                DINOv3ModelManager.check_for_update(model_name)
-        else:
-            if not DINOv3ModelManager.download(model_name):
-                ComfyLogger().log("DINOv3: failed to download model", "ERROR", True)
-                return "", {}
-
+        # Now load model
         if not DINOv3ModelManager.is_loaded(model_name):
             if not DINOv3ModelManager.load(model_name, num_tags=num_tags, device=device):
                 ComfyLogger().log("DINOv3: failed to load model", "ERROR", True)

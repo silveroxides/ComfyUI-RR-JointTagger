@@ -38,17 +38,22 @@ class JTP3CategoryConfig(ComfyNodeABC):
 
     @classmethod
     def INPUT_TYPES(cls) -> Dict[str, Any]:
-        inputs: Dict[str, Any] = {}
-        for cat in _CATEGORY_KEYS:
-            inputs[f"{cat}_topk"] = (IO.INT, {
-                "default": 0, "min": 0, "max": 500, "step": 1,
-                "tooltip": f"Top-K for '{cat}'. 0 with threshold 0.0 = use global.",
-            })
-            inputs[f"{cat}_threshold"] = (IO.FLOAT, {
-                "default": 0.0, "min": -1.0, "max": 0.99, "step": 0.01,
-                "tooltip": f"Threshold for '{cat}'. 0.0 with topk 0 = use global.",
-            })
-        return {"required": inputs}
+        return {
+            "required": {
+                "general_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'general'. 0 with threshold 0.0 = use global."}),
+                "general_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'general'. 0.0 with topk 0 = use global."}),
+                "copyright_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'copyright'. 0 with threshold 0.0 = use global."}),
+                "copyright_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'copyright'. 0.0 with topk 0 = use global."}),
+                "character_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'character'. 0 with threshold 0.0 = use global."}),
+                "character_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'character'. 0.0 with topk 0 = use global."}),
+                "species_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'species'. 0 with threshold 0.0 = use global."}),
+                "species_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'species'. 0.0 with topk 0 = use global."}),
+                "meta_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'meta'. 0 with threshold 0.0 = use global."}),
+                "meta_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'meta'. 0.0 with topk 0 = use global."}),
+                "lore_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'lore'. 0 with threshold 0.0 = use global."}),
+                "lore_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'lore'. 0.0 with topk 0 = use global."}),
+            }
+        }
 
     RETURN_TYPES: Tuple[str, ...] = (JTP3_CATEGORY_CONFIG_TYPE,)
     RETURN_NAMES: Tuple[str, ...] = ("category_config",)
@@ -78,7 +83,7 @@ class Jtp3HydraTagger(ComfyNodeABC):
                 "model": (models, {"default": models[0] if models else "jtp-3-hydra"}),
                 "mode": (["topk", "threshold"], {"default": "topk", "tooltip": "Tag selection mode. 'topk' returns the top K tags; 'threshold' returns all tags above a score. Threshold always acts as a minimum score floor in both modes."}),
                 "topk": (IO.INT, {"default": 40, "min": 1, "max": 500, "step": 1, "display": "slider", "tooltip": "Number of top tags to return (when mode is 'topk')."}),
-                "threshold": (IO.FLOAT, {"default": 0.5, "min": -1.0, "max": 1.0, "step": 0.05, "display": "slider"}),
+                "threshold": (IO.FLOAT, {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05, "display": "slider"}),
                 "max_tags": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Maximum number of tags in the final output (applied after implications). 0 = unlimited."}),
                 "cam_depth": (IO.INT, {"default": 1, "min": 1, "max": 27, "step": 1, "display": "slider", "tooltip": "Depth of the Attention Map overlay. Higher values include more context but may be less precise."}),
                 "seqlen": (IO.INT, {"default": 1024, "min": 64, "max": 2048, "step": 64, "tooltip": "NaFlex sequence length. Determines internal resolution."}),

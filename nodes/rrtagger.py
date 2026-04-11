@@ -108,17 +108,22 @@ class RRCategoryConfig(ComfyNodeABC):
 
     @classmethod
     def INPUT_TYPES(cls) -> Dict[str, Any]:
-        inputs: Dict[str, Any] = {}
-        for cat in _CATEGORY_KEYS:
-            inputs[f"{cat}_topk"] = (IO.INT, {
-                "default": 0, "min": 0, "max": 500, "step": 1,
-                "tooltip": f"Top-K for '{cat}'. 0 with threshold 0.0 = use global.",
-            })
-            inputs[f"{cat}_threshold"] = (IO.FLOAT, {
-                "default": 0.0, "min": 0.0, "max": 0.99, "step": 0.01,
-                "tooltip": f"Threshold for '{cat}'. 0.0 with topk 0 = use global.",
-            })
-        return {"required": inputs}
+        return {
+            "required": {
+                "general_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'general'. 0 with threshold 0.0 = use global."}),
+                "general_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'general'. 0.0 with topk 0 = use global."}),
+                "copyright_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'copyright'. 0 with threshold 0.0 = use global."}),
+                "copyright_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'copyright'. 0.0 with topk 0 = use global."}),
+                "character_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'character'. 0 with threshold 0.0 = use global."}),
+                "character_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'character'. 0.0 with topk 0 = use global."}),
+                "species_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'species'. 0 with threshold 0.0 = use global."}),
+                "species_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'species'. 0.0 with topk 0 = use global."}),
+                "meta_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'meta'. 0 with threshold 0.0 = use global."}),
+                "meta_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'meta'. 0.0 with topk 0 = use global."}),
+                "lore_topk": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Top-K for 'lore'. 0 with threshold 0.0 = use global."}),
+                "lore_threshold": (IO.FLOAT, {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.001, "display": "slider", "tooltip": "Threshold for 'lore'. 0.0 with topk 0 = use global."}),
+            }
+        }
 
     RETURN_TYPES: Tuple[str, ...] = (RR_CATEGORY_CONFIG_TYPE,)
     RETURN_NAMES: Tuple[str, ...] = ("category_config",)
