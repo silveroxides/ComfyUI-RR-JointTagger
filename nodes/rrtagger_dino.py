@@ -111,6 +111,7 @@ class DINOv3Tagger(ComfyNodeABC):
                 "trailing_comma": (IO.BOOLEAN, {"default": False, "tooltip": "Add a trailing comma to the tag string."}),
                 "prefix": (IO.STRING, {"default": "", "tooltip": "Text to prepend to the tags output."}),
                 "seed": (IO.INT, {"default": 0, "min": 0, "max": 0xffffffffffffffff, "tooltip": "Seed for deterministic execution."}),
+                "use_aliases": (IO.BOOLEAN, {"default": False, "tooltip": "Use aliased tag names from tag2alias in the output instead of default tag names."}),
             },
             "optional": {
                 "category_config": (DINO_CATEGORY_CONFIG_TYPE, {"tooltip": "Per-category topk/threshold overrides from the DINOv3 Category Config node."}),
@@ -142,6 +143,7 @@ class DINOv3Tagger(ComfyNodeABC):
         prefix: str = "",
         category_config: Optional[Dict[str, Any]] = None,
         check_updates: bool = False,
+        use_aliases: bool = False,
     ) -> Dict[str, Any]:
         device = comfy.model_management.get_torch_device()
         torch.manual_seed(seed)
@@ -173,6 +175,7 @@ class DINOv3Tagger(ComfyNodeABC):
                 seed=seed,
                 category_config=category_config,
                 check_updates=check_updates,
+                use_aliases=use_aliases,
             )
 
             tags_list.append(tag_str)

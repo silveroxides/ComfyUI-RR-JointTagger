@@ -19,7 +19,7 @@ from ..helpers.config import ComfyExtensionConfig
 from ..helpers.logger import ComfyLogger
 from ..helpers.metaclasses import Singleton
 
-from .dinov3_backbone import DINOv3TaggerModel
+from .dinov3_backbone import DINOv3TaggerModel, build_head_from_checkpoint
 
 
 class DINOv3ModelManager(metaclass=Singleton):
@@ -43,11 +43,51 @@ class DINOv3ModelManager(metaclass=Singleton):
     # Query helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _split_and_clean_state_dict(sd: dict) -> Tuple[dict, dict]:
+        """Split full state dict into (backbone_sd, head_sd), stripping the
+        ``backbone.`` prefix and applying the remaps needed to match
+        ``DINOv3ViTH``'s parameter layout:
+
+          1. ``backbone.model.layer.N.*`` → ``layer.N.*``
+             (the checkpoint has an HF-style intermediate ``model`` wrapper
+             that our flat backbone class does not)
+          2. ``...layer_scale{1,2}.lambda1`` → ``...layer_scale{1,2}``
+             (HF stores layer_scale as a sub-module with a ``lambda1``
+             parameter; we use a plain ``nn.Parameter``)
+          3. Drop any ``rope_embeddings`` buffers (recomputed on the fly)
+        """
+        backbone_sd: dict = {}
+        head_sd: dict = {}
+        for k, v in sd.items():
+            if k.startswith("backbone."):
+                nk = k[len("backbone."):]
+                # Remap (1): strip intermediate "model." before "layer."
+                if nk.startswith("model.layer."):
+                    nk = nk[len("model."):]
+                backbone_sd[nk] = v
+            else:
+                head_sd[k] = v
+
+        # Remap (2): layer.N.layer_scale{1,2}.lambda1 → layer.N.layer_scale{1,2}
+        for k in list(backbone_sd.keys()):
+            if ".layer_scale" in k and k.endswith(".lambda1"):
+                backbone_sd[k[:-len(".lambda1")]] = backbone_sd.pop(k)
+
+        # Remap (3): drop rope buffers (recomputed on the fly)
+        for k in list(backbone_sd.keys()):
+            if "rope_embeddings" in k:
+                backbone_sd.pop(k)
+
+        return backbone_sd, head_sd
+
     @classmethod
     def is_loaded(cls, model_name: str) -> bool:
+        model_data = ComfyCache.get(f"model_dino.{model_name}")
         return (
-            ComfyCache.get(f"model_dino.{model_name}") is not None
-            and ComfyCache.get(f"model_dino.{model_name}.model") is not None
+            model_data is not None
+            and isinstance(model_data, dict)
+            and model_data.get("model") is not None
         )
 
     @classmethod
@@ -152,11 +192,11 @@ class DINOv3ModelManager(metaclass=Singleton):
         Returns ``True`` if the model was re-downloaded, ``False`` otherwise.
         """
         # Once-per-session guard
-        if ComfyCache.get(f"model_dino.{model_name}.update_checked"):
+        if ComfyCache.get(f"model_dino_update.{model_name}"):
             return False
 
         # Mark as checked regardless of outcome so we don't retry every run.
-        ComfyCache.set(f"model_dino.{model_name}.update_checked", True)
+        ComfyCache.set(f"model_dino_update.{model_name}", True)
 
         model_path = os.path.join(cls().model_basepath, f"{model_name}.safetensors")
         if not os.path.exists(model_path):
@@ -241,25 +281,29 @@ class DINOv3ModelManager(metaclass=Singleton):
         )
 
         try:
+            # Load full checkpoint to CPU first
             with UnifiedSafetensorsLoader(model_path, low_memory=True) as loader:
                 sd = {key: loader.get_tensor(key) for key in loader.keys()}
 
-            model = DINOv3TaggerModel(num_tags=num_tags)
-            missing, unexpected = model.load_state_dict(sd, strict=False, assign=True)
-            if missing:
-                ComfyLogger().log(
-                    f"DINOv3 missing keys ({len(missing)}): {missing[:5]}"
-                    + ("…" if len(missing) > 5 else ""),
-                    type="WARNING", always=True,
-                )
-            if unexpected:
-                ComfyLogger().log(
-                    f"DINOv3 unexpected keys ({len(unexpected)}): {unexpected[:5]}"
-                    + ("…" if len(unexpected) > 5 else ""),
-                    type="WARNING", always=True,
-                )
+            # Split and clean state dict
+            backbone_sd, head_sd = cls._split_and_clean_state_dict(sd)
 
-            # Backbone in bfloat16 (or float16 for older GPUs), projection stays float32
+            if not head_sd:
+                raise RuntimeError(
+                    "Checkpoint contains no non-backbone keys — cannot build head.")
+
+            # Build model with dynamically-determined head architecture
+            model = DINOv3TaggerModel()
+            head_module, head_sd_remapped = build_head_from_checkpoint(
+                head_sd, num_tags=num_tags,
+            )
+            model.head = head_module
+
+            # Strict load both parts
+            model.backbone.load_state_dict(backbone_sd, strict=True)
+            model.head.load_state_dict(head_sd_remapped, strict=True)
+
+            # Configure dtype: backbone in bf16/fp16, head stays fp32
             use_dtype = torch.bfloat16
             if device.type == "cuda":
                 cap = torch.cuda.get_device_capability()
@@ -270,11 +314,13 @@ class DINOv3ModelManager(metaclass=Singleton):
             model = model.to(device)
             model.eval()
 
+            # Cache the model with all metadata in a single dict
             ComfyCache.set(f"model_dino.{model_name}", {
                 "model": model,
                 "device": device,
                 "dtype": use_dtype,
             })
+
             ComfyLogger().log(
                 f"DINOv3 model {model_name} loaded on {device} ({use_dtype})",
                 type="INFO", always=True,

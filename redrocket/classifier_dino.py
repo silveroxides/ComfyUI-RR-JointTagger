@@ -46,6 +46,7 @@ class DINOv3Inference:
         seed: int = 0,
         category_config: Optional[Dict[str, Any]] = None,
         check_updates: bool = False,
+        use_aliases: bool = False,
     ) -> Tuple[str, Dict[str, float]]:
         """Run the full DINOv3 tagging pipeline on a single image.
 
@@ -83,6 +84,8 @@ class DINOv3Inference:
             Optional per-category topk/threshold overrides dict from
             ``DINOv3CategoryConfig``.  Keys are ``"{cat}_topk"`` and
             ``"{cat}_threshold"``.  Categories with both 0 use globals.
+        use_aliases:
+            If ``True``, use aliased tag names in the output.
 
         Returns
         -------
@@ -95,7 +98,7 @@ class DINOv3Inference:
         params_string = (
             f"{model_name}|{mode}|{topk}|{threshold}|{max_size}|"
             f"{implications_mode}|{exclude_tags}|{exclude_categories}|"
-            f"{max_tags}|{trailing_comma}|{prefix}|{seed}|{cc_hash}"
+            f"{max_tags}|{trailing_comma}|{prefix}|{seed}|{cc_hash}|{use_aliases}"
         )
         params_key = hashlib.sha256(params_string.encode()).hexdigest()
 
@@ -196,8 +199,13 @@ class DINOv3Inference:
                 ComfyLogger().log("DINOv3: failed to load model", "ERROR", True)
                 return "", {}
 
-        model = ComfyCache.get(f"model_dino.{model_name}.model")
-        model_dtype = ComfyCache.get(f"model_dino.{model_name}.dtype") or torch.bfloat16
+        model_data = ComfyCache.get(f"model_dino.{model_name}")
+        if not model_data or not isinstance(model_data, dict):
+            ComfyLogger().log("DINOv3: model cache corrupted", "ERROR", True)
+            return "", {}
+        
+        model = model_data["model"]
+        model_dtype = model_data.get("dtype", torch.bfloat16)
 
         # Move model to inference device (may have been offloaded to CPU)
         model.to(device)
@@ -288,6 +296,7 @@ class DINOv3Inference:
             exclude_categories=exclude_categories,
             trailing_comma=trailing_comma,
             prefix=prefix,
+            use_aliases=use_aliases,
         )
 
         # ----------------------------------------------------------

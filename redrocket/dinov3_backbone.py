@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 from functools import lru_cache
+from typing import Tuple
 
 import torch
 import torch.nn as nn
@@ -203,24 +204,145 @@ class DINOv3ViTH(nn.Module):
 
 
 # =============================================================================
-# Tagger head
+# Tagger heads
 # =============================================================================
 
-class DINOv3TaggerModel(nn.Module):
-    """DINOv3 ViT-H/16+ backbone + linear projection head.
+FEATURE_DIM = (1 + N_REGISTERS) * D_MODEL  # 6400
 
-    features = concat(CLS, reg_0..reg_3) -> [B, (1+R)*D]
-    projection: Linear -> [B, num_tags]
+
+class _LowRankHead(nn.Module):
+    """Two-matrix low-rank projection head.
+
+    features (FEATURE_DIM)
+      → Linear(FEATURE_DIM, rank, bias=?)
+      → Linear(rank, num_tags, bias=?)
     """
 
-    def __init__(self, num_tags: int, projection_bias: bool = False):
+    def __init__(self, rank: int, num_tags: int,
+                 down_bias: bool = True, up_bias: bool = True):
         super().__init__()
-        self.backbone   = DINOv3ViTH()
-        self.projection = nn.Linear((1 + N_REGISTERS) * D_MODEL, num_tags, bias=projection_bias)
+        self.proj_down = nn.Linear(FEATURE_DIM, rank, bias=down_bias)
+        self.proj_up = nn.Linear(rank, num_tags, bias=up_bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.proj_up(self.proj_down(x))
+
+
+def build_head_from_checkpoint(
+    head_sd: dict,
+    num_tags: int,
+) -> Tuple[nn.Module, dict]:
+    """Inspect head state dict and build matching head module.
+
+    Supports two layouts:
+      1. Single linear — any ``*.weight`` with shape [num_tags, FEATURE_DIM]
+      2. Low-rank pair — one ``*.weight`` [rank, FEATURE_DIM] plus
+                         one ``*.weight`` [num_tags, rank]
+
+    Returns (module, remapped_state_dict) where the remapped dict
+    matches the module's own key names for strict loading.
+    """
+    weights_2d = [(k, v) for k, v in head_sd.items()
+                  if k.endswith(".weight") and v.ndim == 2]
+
+    # --- Case 1: single dense linear -----------------------------------------
+    singles = [(k, v) for k, v in weights_2d
+               if tuple(v.shape) == (num_tags, FEATURE_DIM)]
+    if len(weights_2d) <= 2 and len(singles) == 1:
+        wkey, wval = singles[0]
+        base = wkey[:-len(".weight")]
+        bias_key = base + ".bias"
+        has_bias = bias_key in head_sd
+        module = nn.Linear(FEATURE_DIM, num_tags, bias=has_bias)
+        remapped = {"weight": wval}
+        if has_bias:
+            remapped["bias"] = head_sd[bias_key]
+        # Sanity check: no extra keys we don't understand
+        expected_src = {wkey} | ({bias_key} if has_bias else set())
+        extra = set(head_sd) - expected_src
+        if extra:
+            raise RuntimeError(
+                f"Head has single-linear shape but extra unknown keys: {sorted(extra)}")
+        return module, remapped
+
+    # --- Case 2: low-rank pair -----------------------------------------------
+    down = None  # (key, tensor) with shape [rank, FEATURE_DIM]
+    up = None    # (key, tensor) with shape [num_tags, rank]
+    for k, v in weights_2d:
+        if v.shape[1] == FEATURE_DIM and v.shape[0] != num_tags:
+            down = (k, v)
+        elif v.shape[0] == num_tags and v.shape[1] != FEATURE_DIM:
+            up = (k, v)
+
+    if down is not None and up is not None:
+        rank_down = down[1].shape[0]
+        rank_up = up[1].shape[1]
+        if rank_down != rank_up:
+            raise RuntimeError(
+                f"Low-rank head: inner dims disagree "
+                f"(down out={rank_down}, up in={rank_up})")
+
+        down_key, down_w = down
+        up_key, up_w = up
+        down_base = down_key[:-len(".weight")]
+        up_base = up_key[:-len(".weight")]
+        down_bias_key = down_base + ".bias"
+        up_bias_key = up_base + ".bias"
+        has_down_bias = down_bias_key in head_sd
+        has_up_bias = up_bias_key in head_sd
+
+        module = _LowRankHead(
+            rank=rank_down,
+            num_tags=num_tags,
+            down_bias=has_down_bias,
+            up_bias=has_up_bias,
+        )
+        remapped = {
+            "proj_down.weight": down_w,
+            "proj_up.weight": up_w,
+        }
+        if has_down_bias:
+            remapped["proj_down.bias"] = head_sd[down_bias_key]
+        if has_up_bias:
+            remapped["proj_up.bias"] = head_sd[up_bias_key]
+
+        # Sanity check
+        expected_src = {down_key, up_key}
+        if has_down_bias:
+            expected_src.add(down_bias_key)
+        if has_up_bias:
+            expected_src.add(up_bias_key)
+        extra = set(head_sd) - expected_src
+        if extra:
+            raise RuntimeError(
+                f"Low-rank head detected but checkpoint has extra unknown "
+                f"head keys: {sorted(extra)}")
+        return module, remapped
+
+    raise RuntimeError(
+        "Could not infer head architecture from checkpoint. "
+        f"Non-backbone keys found: {sorted(head_sd.keys())}"
+    )
+
+
+class DINOv3TaggerModel(nn.Module):
+    """DINOv3 ViT-H/16+ backbone + adaptive projection head.
+
+    The head is attached after checkpoint inspection so we can build the
+    correct shape (single-layer or low-rank).
+
+    features = concat(CLS, reg_0..reg_3) -> [B, FEATURE_DIM]
+    head: Linear or _LowRankHead -> [B, num_tags]
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.backbone = DINOv3ViTH()
+        self.head: nn.Module | None = None  # attached after checkpoint inspection
 
     def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
-        hidden   = self.backbone(pixel_values)                      # [B, S, D]
-        cls      = hidden[:, 0, :]                                  # [B, D]
-        regs     = hidden[:, 1: 1 + N_REGISTERS, :].flatten(1)     # [B, R*D]
-        features = torch.cat([cls, regs], dim=-1)                   # [B, (1+R)*D]
-        return self.projection(features.float())                     # fp32 for stability
+        hidden = self.backbone(pixel_values)  # [B, 1+R+P, D]
+        cls = hidden[:, 0, :]  # [B, D]
+        regs = hidden[:, 1: 1 + N_REGISTERS, :].flatten(1)  # [B, R*D]
+        features = torch.cat([cls, regs], dim=-1).float()  # [B, FEATURE_DIM] (fp32 for head)
+        return self.head(features)  # [B, num_tags]

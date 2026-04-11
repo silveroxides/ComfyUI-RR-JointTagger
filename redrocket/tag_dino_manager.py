@@ -106,6 +106,11 @@ class DINOv3TagManager(metaclass=Singleton):
         return ComfyCache.get(f"tags_dino.{model_name}.tag2category")
 
     @classmethod
+    def get_tag2alias(cls, model_name: str) -> Optional[Dict[str, str]]:
+        """Return the ``{tag_name: alias}`` dict, or ``None``."""
+        return ComfyCache.get(f"tags_dino.{model_name}.tag2alias")
+
+    @classmethod
     def get_idx2tag(cls, model_name: str) -> Optional[List[str]]:
         return ComfyCache.get(f"tags_dino.{model_name}.idx2tag")
 
@@ -180,6 +185,7 @@ class DINOv3TagManager(metaclass=Singleton):
 
             idx2tag: List[str] = data["idx2tag"]
             tag2category: Dict[str, int] = data.get("tag2category", {})
+            tag2alias: Dict[str, str] = data.get("tag2alias", {})
 
             # Populate the same cache keys as load() so downstream is unaffected
             ComfyCache.set(f"tags_dino.{model_name}", {
@@ -188,10 +194,13 @@ class DINOv3TagManager(metaclass=Singleton):
             })
             # Store category mapping separately
             ComfyCache.set(f"tags_dino.{model_name}.tag2category", tag2category)
+            # Store alias mapping separately
+            ComfyCache.set(f"tags_dino.{model_name}.tag2alias", tag2alias)
 
             ComfyLogger().log(
                 f"DINOv3 categorised vocab loaded: {len(idx2tag):,} tags, "
-                f"{len(tag2category):,} category entries for {model_name}",
+                f"{len(tag2category):,} category entries, "
+                f"{len(tag2alias):,} alias entries for {model_name}",
                 type="INFO", always=True,
             )
             return True
@@ -485,6 +494,7 @@ class DINOv3TagManager(metaclass=Singleton):
         exclude_categories: str = "",
         trailing_comma: bool = False,
         prefix: str = "",
+        use_aliases: bool = False,
     ) -> Tuple[str, Dict[str, float]]:
         """Format raw (tag, score) list into a tag string and scores dict.
 
@@ -515,6 +525,8 @@ class DINOv3TagManager(metaclass=Singleton):
             Append a trailing comma to the tag string.
         prefix:
             Text to prepend.
+        use_aliases:
+            If ``True``, use aliased tag names from tag2alias in the output.
         """
         metadata = ComfyCache.get(f"tags_dino.{model_name}.metadata")
         tag2category: Optional[Dict[str, int]] = cls.get_tag2category(model_name)
@@ -640,7 +652,12 @@ class DINOv3TagManager(metaclass=Singleton):
 
         for tag, score in sorted_items:
             scores_dict[tag] = round(score, 4)
-            tag_list.append(tag)
+            display_tag = tag
+            if use_aliases:
+                tag2alias = cls.get_tag2alias(model_name)
+                if tag2alias and tag in tag2alias:
+                    display_tag = tag2alias[tag]
+            tag_list.append(display_tag)
 
         # Prefix handling
         if prefix:
