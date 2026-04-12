@@ -1,7 +1,7 @@
 [project]
 name = "ComfyUI-RR-JointTagger"
 description = "Tagger used to tag image of but not limited to furry art."
-version = "0.5.2"
+version = "0.5.3"
 license = {file = "LICENSE"}
 dependencies = ["torchvision", "pillow", "requests", "aiohttp", "numpy", "msgspec", "timm>=1.0.16", "einops", "unifiedefficientloader"]
 
