@@ -219,35 +219,31 @@ class DINOv3TagManager(metaclass=Singleton):
 
     @classmethod
     def load_metadata(cls, model_name: str) -> bool:
-        """Load tag metadata (categories + implications) from a JTP-3-style
-        CSV.  All tag keys and implication references are normalised to use
+        """Load tag metadata (implications) from downloaded tag2implicit.json.
+        All tag keys and implication references are normalised to use
         spaces instead of underscores to match DINOv3 output format.
+        Metadata is stored as {normalized_tag: (-1, [normalized_implied_tag])}.
         """
-        csv_path = os.path.join(cls().tags_basepath, f"{model_name}-tags.csv")
-        if not os.path.exists(csv_path):
+        json_path = os.path.join(cls().tags_basepath, f"{model_name}-tag2implicit.json")
+        if not os.path.exists(json_path):
             ComfyLogger().log(
-                f"DINOv3 tag metadata CSV not found: {csv_path} "
+                f"DINOv3 tag metadata JSON not found: {json_path} "
                 "(implications will be unavailable)",
                 type="WARNING", always=True,
             )
             return False
 
         try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            tag2implicit = data.get("tag2implicit", {})
+
             metadata: Dict[str, Tuple[int, List[str]]] = {}
-            with open(csv_path, "r", encoding="utf-8", newline="") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    # Normalise tag: underscores -> spaces
-                    tag = row["tag"].replace("_", " ")
-                    category = int(row.get("category", 0))
-                    # Normalise implications the same way
-                    raw_impl = row.get("implications", "")
-                    implications = [
-                        imp.replace("_", " ")
-                        for imp in raw_impl.split()
-                        if imp
-                    ]
-                    metadata[tag] = (category, implications)
+            for tag, implied in tag2implicit.items():
+                # Normalise tag and implied: underscores -> spaces
+                normalized_tag = tag.replace("_", " ")
+                normalized_implied = implied.replace("_", " ")
+                metadata[normalized_tag] = (-1, [normalized_implied])
 
             ComfyCache.set(f"tags_dino.{model_name}.metadata", metadata)
             ComfyLogger().log(
@@ -397,7 +393,7 @@ class DINOv3TagManager(metaclass=Singleton):
 
     @classmethod
     def download_metadata(cls, model_name: str) -> bool:
-        """Download tag metadata CSV from the configured ``data_url``."""
+        """Download tag2implicit.json from the configured URL."""
         os.makedirs(cls().tags_basepath, exist_ok=True)
 
         config = ComfyExtensionConfig().get()
@@ -406,38 +402,21 @@ class DINOv3TagManager(metaclass=Singleton):
             hf_endpoint = f"https://{hf_endpoint}"
         hf_endpoint = hf_endpoint.rstrip("/")
 
-        data_url = ComfyExtensionConfig().get(
-            property=f"models_dino.{model_name}.data_url",
+        tag2implicit_url = ComfyExtensionConfig().get(
+            property=f"models_dino.{model_name}.tag2implicit_url",
         )
-        if not data_url:
+        if not tag2implicit_url:
             ComfyLogger().log(
-                f"No data_url for DINOv3 model {model_name} — "
+                f"No tag2implicit_url for DINOv3 model {model_name} — "
                 "implications will not be available",
                 type="WARNING", always=True,
             )
             return False
-        data_url = data_url.replace("{HF_ENDPOINT}", hf_endpoint)
-        if not data_url.endswith("/"):
-            data_url += "/"
-
-        # The CSV filename follows the convention from the data_url source.
-        # The config's data_url_tag_file overrides the default if set.
-        tag_file = ComfyExtensionConfig().get(
-            property=f"models_dino.{model_name}.data_url_tag_file",
-        )
-        if not tag_file or not isinstance(tag_file, str):
-            # Default: derive from the JTP-3 naming convention
-            tag_file = ComfyExtensionConfig().get(
-                property=f"models_dino.{model_name}.data_tag_file",
-            )
-        if not tag_file or not isinstance(tag_file, str):
-            tag_file = "jtp-3-hydra-tags.csv"
-
-        url = f"{data_url}{tag_file}"
-        dest = os.path.join(cls().tags_basepath, f"{model_name}-tags.csv")
+        url = tag2implicit_url.replace("{HF_ENDPOINT}", hf_endpoint)
+        dest = os.path.join(cls().tags_basepath, f"{model_name}-tag2implicit.json")
 
         ComfyLogger().log(
-            f"Downloading DINOv3 tag metadata from {url}",
+            f"Downloading DINOv3 tag2implicit.json from {url}",
             type="INFO", always=True,
         )
 
@@ -445,7 +424,7 @@ class DINOv3TagManager(metaclass=Singleton):
             response = requests.get(url, stream=True)
             if response.status_code != 200:
                 ComfyLogger().log(
-                    f"Failed to download tag metadata: HTTP {response.status_code}",
+                    f"Failed to download tag2implicit.json: HTTP {response.status_code}",
                     type="WARNING", always=True,
                 )
                 return False
@@ -455,7 +434,7 @@ class DINOv3TagManager(metaclass=Singleton):
 
             pbar = comfy.utils.ProgressBar(total_size) if total_size > 0 else None
             with open(dest, "wb") as f, tqdm(
-                desc=f"{model_name}-tags.csv",
+                desc=f"{model_name}-tag2implicit.json",
                 total=total_size,
                 unit="iB",
                 unit_scale=True,
@@ -473,7 +452,7 @@ class DINOv3TagManager(metaclass=Singleton):
 
         except Exception as e:
             ComfyLogger().log(
-                f"Failed to download DINOv3 tag metadata: {e}\n{traceback.format_exc()}",
+                f"Failed to download DINOv3 tag2implicit.json: {e}\n{traceback.format_exc()}",
                 type="WARNING", always=True,
             )
             return False

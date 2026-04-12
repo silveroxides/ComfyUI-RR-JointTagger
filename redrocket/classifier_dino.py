@@ -113,7 +113,7 @@ class DINOv3Inference:
             if check_updates:
                 if DINOv3ModelManager.check_for_update(model_name):
                     # Model updated, clear vocab so it gets re-downloaded
-                    for ext in ["-vocab.json", "-cat-vocab.json", "-tags.csv"]:
+                    for ext in ["-vocab.json", "-cat-vocab.json", "-tag2implicit.json"]:
                         p = os.path.join(tags_basepath, f"{model_name}{ext}")
                         if os.path.exists(p):
                             try:
@@ -188,8 +188,8 @@ class DINOv3Inference:
         # Load tag metadata (implications) if needed and available.
         # Category exclusion uses tag2category from cat-vocab independently.
         if implications_mode != "off" and not DINOv3TagManager.has_metadata(model_name):
-            csv_path = os.path.join(tags_basepath, f"{model_name}-tags.csv")
-            if not os.path.exists(csv_path):
+            json_path = os.path.join(tags_basepath, f"{model_name}-tag2implicit.json")
+            if not os.path.exists(json_path):
                 DINOv3TagManager.download_metadata(model_name)
             DINOv3TagManager.load_metadata(model_name)
 
