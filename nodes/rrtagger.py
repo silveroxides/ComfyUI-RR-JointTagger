@@ -154,7 +154,7 @@ class RRJointTagger(ComfyNodeABC):
                 "max_tags": (IO.INT, {"default": 0, "min": 0, "max": 500, "step": 1, "tooltip": "Maximum number of tags in the final output (applied after implications). 0 = unlimited."}),
                 "implications_mode": (["inherit", "constrain", "remove", "constrain-remove", "off"], {"default": "off", "tooltip": "How to handle implied tags (e.g. if 'cat' is present, 'feline' is implied). Requires JTP-3 metadata CSV."}),
                 "exclude_tags": (IO.STRING, {"multiline": True, "tooltip": "Comma-separated tags to exclude. Supports * wildcards: human* (starts with), *human (ends with), *human* (contains), human*top (starts/ends)."}),
-                "exclude_categories": (IO.STRING, {"multiline": True, "tooltip": "Comma separated categories to exclude (e.g. copyright, character, species, meta, lore)."}),
+                "exclude_categories": (IO.STRING, {"multiline": False, "tooltip": "Comma separated categories to exclude (e.g. copyright, character, species, meta, lore)."}),
                 "prefix": (IO.STRING, {"default": "", "tooltip": "Text to prepend to the tags output."}),
                 "replace_underscore": (IO.BOOLEAN, {"default": True, "tooltip": "Replace underscores with spaces in tags."}),
                 "trailing_comma": (IO.BOOLEAN, {"default": False, "tooltip": "Add a trailing comma to the tag string."}),

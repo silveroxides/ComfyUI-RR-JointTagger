@@ -89,7 +89,7 @@ class Jtp3HydraTagger(ComfyNodeABC):
                 "seqlen": (IO.INT, {"default": 1024, "min": 64, "max": 2048, "step": 64, "tooltip": "NaFlex sequence length. Determines internal resolution."}),
                 "implications_mode": (["inherit", "constrain", "remove", "constrain-remove", "off"], {"default": "inherit", "tooltip": "How to handle implied tags (e.g. if 'cat' is present, 'feline' is implied)."}),
                 "exclude_tags": (IO.STRING, {"multiline": True, "tooltip": "Comma-separated tags to exclude. Supports * wildcards: human* (starts with), *human (ends with), *human* (contains), human*top (starts/ends)."}),
-                "exclude_categories": (IO.STRING, {"multiline": True, "tooltip": "Comma separated categories to exclude (e.g. artist, copyright, character, species, meta, lore)."}),
+                "exclude_categories": (IO.STRING, {"multiline": False, "tooltip": "Comma separated categories to exclude (e.g. artist, copyright, character, species, meta, lore)."}),
                 "prefix": (IO.STRING, {"default": "", "tooltip": "Text to prepend to the tags output."}),
                 "original_tags": (IO.BOOLEAN, {"default": False, "tooltip": "If True, output original e621 tags (e.g. 'vulva'). If False, rewrites them (e.g. 'pussy') compatible with some diffusion models."}),
                 "seed": (IO.INT, {"default": 0, "min": 0, "max": 0xffffffffffffffff, "tooltip": "Seed for deterministic execution (mainly for CAM)."}),

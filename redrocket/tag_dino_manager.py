@@ -33,8 +33,7 @@ TAG_CATEGORIES: Dict[str, int] = {
     "contributor":    2,
     "copyright":      3,
     "character":      4,
-    "species/meta":   5,
-    "species":        5,   # alias so users can type either form
+    "species":        5,
     "disambiguation": 6,
     "meta":           7,
     "lore":           8,
@@ -50,7 +49,7 @@ CATEGORY_ID_TO_NAME: Dict[int, str] = {
      2: "contributor",
      3: "copyright",
      4: "character",
-     5: "species_meta",
+     5: "species",
      6: "disambiguation",
      7: "meta",
      8: "lore",
@@ -328,7 +327,11 @@ class DINOv3TagManager(metaclass=Singleton):
 
     @classmethod
     def download_cat_vocab(cls, model_name: str) -> bool:
-        """Download the categorised vocab JSON from ``cat_vocab_url``."""
+        """Download the categorised vocab JSON.
+
+        Tries ``cat_vocab_url`` first; falls back to ``cat_vocab_backup_url``
+        if the primary download fails.
+        """
         os.makedirs(cls().tags_basepath, exist_ok=True)
 
         config = ComfyExtensionConfig().get()
@@ -348,44 +351,61 @@ class DINOv3TagManager(metaclass=Singleton):
             return False
         cat_vocab_url = cat_vocab_url.replace("{HF_ENDPOINT}", hf_endpoint)
 
-        dest = os.path.join(cls().tags_basepath, f"{model_name}-cat-vocab.json")
-        ComfyLogger().log(
-            f"Downloading DINOv3 categorised vocab from {cat_vocab_url}",
-            type="INFO", always=True,
+        cat_vocab_backup_url = ComfyExtensionConfig().get(
+            property=f"models_dino.{model_name}.cat_vocab_backup_url",
         )
 
-        try:
-            response = requests.get(cat_vocab_url, stream=True)
-            response.raise_for_status()
+        dest = os.path.join(cls().tags_basepath, f"{model_name}-cat-vocab.json")
 
-            total_size = int(response.headers.get("content-length", 0))
-            block_size = 1024
+        def _download_url(url: str, label: str) -> bool:
+            ComfyLogger().log(
+                f"Downloading DINOv3 categorised vocab from {url}",
+                type="INFO", always=True,
+            )
+            try:
+                response = requests.get(url, stream=True)
+                response.raise_for_status()
 
-            pbar = comfy.utils.ProgressBar(total_size) if total_size > 0 else None
-            with open(dest, "wb") as f, tqdm(
-                desc=f"{model_name}-cat-vocab",
-                total=total_size,
-                unit="iB",
-                unit_scale=True,
-                unit_divisor=1024,
-            ) as bar:
-                downloaded = 0
-                for data in response.iter_content(block_size):
-                    f.write(data)
-                    bar.update(len(data))
-                    downloaded += len(data)
-                    if pbar is not None:
-                        pbar.update_absolute(downloaded, total_size)
+                total_size = int(response.headers.get("content-length", 0))
+                block_size = 1024
 
+                pbar = comfy.utils.ProgressBar(total_size) if total_size > 0 else None
+                with open(dest, "wb") as f, tqdm(
+                    desc=f"{model_name}-cat-vocab",
+                    total=total_size,
+                    unit="iB",
+                    unit_scale=True,
+                    unit_divisor=1024,
+                ) as bar:
+                    downloaded = 0
+                    for data in response.iter_content(block_size):
+                        f.write(data)
+                        bar.update(len(data))
+                        downloaded += len(data)
+                        if pbar is not None:
+                            pbar.update_absolute(downloaded, total_size)
+
+                return True
+
+            except Exception as e:
+                ComfyLogger().log(
+                    f"Failed to download DINOv3 categorised vocab ({label}): {e}\n"
+                    f"{traceback.format_exc()}",
+                    type="WARNING", always=True,
+                )
+                return False
+
+        if _download_url(cat_vocab_url, "primary"):
             return True
 
-        except Exception as e:
+        if cat_vocab_backup_url:
             ComfyLogger().log(
-                f"Failed to download DINOv3 categorised vocab: {e}\n"
-                f"{traceback.format_exc()}",
+                f"Primary cat_vocab_url failed — trying backup URL",
                 type="WARNING", always=True,
             )
-            return False
+            return _download_url(cat_vocab_backup_url, "backup")
+
+        return False
 
     # ------------------------------------------------------------------
     # Download metadata (CSV)
@@ -540,34 +560,50 @@ class DINOv3TagManager(metaclass=Singleton):
 
         # ----- Implications processing (only if metadata is available) -----
         if metadata and implications_mode != "off":
-            def inherit_implications(lbls: Dict[str, float], antecedent: str) -> None:
-                if antecedent not in metadata:
+            def inherit_implications(
+                lbls: Dict[str, float], antecedent: str,
+                _visited: Optional[Set[str]] = None,
+            ) -> None:
+                if _visited is None:
+                    _visited = set()
+                if antecedent in _visited or antecedent not in metadata:
                     return
+                _visited.add(antecedent)
                 p = lbls.get(antecedent, 0.0)
                 for consequent in metadata[antecedent][1]:
                     if lbls.get(consequent, 0.0) < p:
                         lbls[consequent] = p
-                    inherit_implications(lbls, consequent)
+                    inherit_implications(lbls, consequent, _visited)
 
             def constrain_implications(
                 lbls: Dict[str, float], antecedent: str, _target: Optional[str] = None,
+                _visited: Optional[Set[str]] = None,
             ) -> None:
+                if _visited is None:
+                    _visited = set()
                 if _target is None:
                     _target = antecedent
-                if antecedent not in metadata:
+                if antecedent in _visited or antecedent not in metadata:
                     return
+                _visited.add(antecedent)
                 for consequent in metadata[antecedent][1]:
                     p = lbls.get(consequent, 0.0)
                     if lbls.get(_target, 0.0) > p:
                         lbls[_target] = p
-                    constrain_implications(lbls, consequent, _target=_target)
+                    constrain_implications(lbls, consequent, _target=_target, _visited=_visited)
 
-            def remove_implications(lbls: Dict[str, float], antecedent: str) -> None:
-                if antecedent not in metadata:
+            def remove_implications(
+                lbls: Dict[str, float], antecedent: str,
+                _visited: Optional[Set[str]] = None,
+            ) -> None:
+                if _visited is None:
+                    _visited = set()
+                if antecedent in _visited or antecedent not in metadata:
                     return
+                _visited.add(antecedent)
                 for consequent in metadata[antecedent][1]:
                     lbls.pop(consequent, None)
-                    remove_implications(lbls, consequent)
+                    remove_implications(lbls, consequent, _visited)
 
             tag_keys = list(labels.keys())
 
@@ -612,11 +648,12 @@ class DINOv3TagManager(metaclass=Singleton):
                 if tag in filtered:
                     if tag not in metadata:
                         continue
+                    visited: Set[str] = {tag}
                     for consequent in metadata[tag][1]:
                         filtered.pop(consequent, None)
-                        # Recurse
+                        # Recurse with shared visited set to break cycles
                         cls._remove_implications_recursive(
-                            filtered, consequent, metadata,
+                            filtered, consequent, metadata, visited,
                         )
 
         # ----- Format output -----
@@ -657,11 +694,15 @@ class DINOv3TagManager(metaclass=Singleton):
         labels: Dict[str, float],
         antecedent: str,
         metadata: Dict[str, Tuple[int, List[str]]],
+        _visited: Optional[Set[str]] = None,
     ) -> None:
-        if antecedent not in metadata:
+        if _visited is None:
+            _visited = set()
+        if antecedent in _visited or antecedent not in metadata:
             return
+        _visited.add(antecedent)
         for consequent in metadata[antecedent][1]:
             labels.pop(consequent, None)
             DINOv3TagManager._remove_implications_recursive(
-                labels, consequent, metadata,
+                labels, consequent, metadata, _visited,
             )
