@@ -52,9 +52,9 @@
 	"models_dino": {
 		"tagger-proto": {
 			"name": "DINOv3 Tagger Proto",
-			"url": "{HF_ENDPOINT}/lodestones/tagger-experiment/resolve/main/tagger_proto.safetensors",
-			"vocab_url": "{HF_ENDPOINT}/lodestones/tagger-experiment/resolve/main/tagger_vocab.json",
-			"cat_vocab_url": "{HF_ENDPOINT}/lodestones/tagger-experiment/resolve/main/tagger_vocab_with_categories_and_alias_updated.json",
+			"url": "{HF_ENDPOINT}/lodestones/taggerine/resolve/main/tagger_proto.safetensors",
+			"vocab_url": "{HF_ENDPOINT}/lodestones/taggerine/resolve/main/tagger_vocab.json",
+			"cat_vocab_url": "{HF_ENDPOINT}/lodestones/taggerine/resolve/main/tagger_vocab_with_categories_and_alias_updated.json",
 			"cat_vocab_backup_url": "https://raw.githubusercontent.com/silveroxides/Tagger-Experiment-UI/refs/heads/main/tagger_vocab_with_categories.json",
 			"tag2implicit_url": "{HF_ENDPOINT}/spaces/silveroxides/lode-tagger-experiment/resolve/main/tag2implicit.json",
 			"data_url": "{HF_ENDPOINT}/RedRocket/JTP-3/resolve/main/data",
