@@ -311,18 +311,18 @@ class DINOv3ModelManager(metaclass=Singleton):
                     use_dtype = torch.float16
 
             model.backbone = model.backbone.to(dtype=use_dtype)
-            model = model.to(device)
+            model = model.to("cpu")
             model.eval()
 
-            # Cache the model with all metadata in a single dict
+            # Cache the model with all metadata in a single dict (stored on CPU)
             ComfyCache.set(f"model_dino.{model_name}", {
                 "model": model,
-                "device": device,
+                "device": torch.device("cpu"),
                 "dtype": use_dtype,
             })
 
             ComfyLogger().log(
-                f"DINOv3 model {model_name} loaded on {device} ({use_dtype})",
+                f"DINOv3 model {model_name} loaded on CPU ({use_dtype})",
                 type="INFO", always=True,
             )
             return True

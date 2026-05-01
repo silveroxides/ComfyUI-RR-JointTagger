@@ -72,37 +72,14 @@ class JtpModelManager(metaclass=Singleton):
         with UnifiedSafetensorsLoader(model_path, low_memory=True) as loader:
             sd = {key: loader.get_tensor(key) for key in loader.keys()}
         model.load_state_dict(sd)
-        if device.type != "cpu":
-            model.to(device=device, dtype=torch.float16, memory_format=torch.channels_last)
+        model.to(device="cpu", dtype=torch.float32)
         model.eval()
         ComfyCache.set(f'model.{model_name}', {
             "model": model,
             "version": version,
-            "device": device
+            "device": torch.device('cpu')
         })
-        ComfyLogger().log(message=f"Model {model_name} loaded successfully", type="INFO", always=True)
-        return True
-
-    @classmethod
-    def switch_device(cls, model_name: str, device: torch.device) -> bool:
-        """
-        Switch the device of a RedRocket JTP Vision Transformer model
-        """
-        if not cls.is_loaded(model_name):
-            ComfyLogger().log(message=f"Model {model_name} not loaded, nothing to do here", type="WARNING", always=True)
-            return False
-        model: Union[torch.nn.Module, None] = ComfyCache.get(f'model.{model_name}.model')
-        if model is None:
-            ComfyLogger().log(message=f"Model {model_name} is not loaded, cannot switch it to another device", type="ERROR", always=True)
-            return False
-        if device.type != "cpu":
-            model = model.to(device=device, dtype=torch.float16, memory_format=torch.channels_last)
-            ComfyLogger().log(message="Switched to GPU with mixed precision", type="INFO", always=True)
-        else:
-            model = model.to(device=device)
-            ComfyLogger().log(message="Switched to CPU", type="INFO", always=True)
-        ComfyCache.set(f'model.{model_name}.device', device)
-        ComfyCache.set(f'model.{model_name}.model', model)
+        ComfyLogger().log(message=f"Model {model_name} loaded successfully on CPU", type="INFO", always=True)
         return True
 
     @classmethod

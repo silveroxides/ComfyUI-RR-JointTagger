@@ -91,105 +91,110 @@ class JtpInference:
         if model_data is None:
             ComfyLogger().log(message=f"Model data for {model_name} not found in cache", type="ERROR", always=True)
             return "", {}
-        # Move model to inference device (may have been offloaded to CPU)
+        # Move model to inference device
         model_data.to(device)
-        with torch.no_grad():
-            if f"{model_version}" == "1":
-                logits = model_data(tensor)
-                probits = torch.nn.functional.sigmoid(logits[0]).cpu()
-                values, indices = probits.topk(250)
-            elif f"{model_version}" == "2":
-                probits = model_data(tensor)[0].cpu()
-                values, indices = probits.topk(250)
-            else:
-                ComfyLogger().log(message=f"Model version {model_version} not supported", type="ERROR", always=True)
-                return "", {}
-        # Offload model to free GPU memory
-        offload_device = mm.unet_offload_device()
-        model_data.to(offload_device)
-        mm.soft_empty_cache()
+        if device.type != "cpu":
+             model_data = model_data.to(dtype=torch.float16, memory_format=torch.channels_last)
 
-        # ----------------------------------------------------------
-        # Top-K + threshold selection
-        # ----------------------------------------------------------
-        metadata = ComfyCache.get(f'tags.{tags_name}.metadata')
+        try:
+            with torch.no_grad():
+                if f"{model_version}" == "1":
+                    logits = model_data(tensor)
+                    probits = torch.nn.functional.sigmoid(logits[0]).cpu()
+                    values, indices = probits.topk(250)
+                elif f"{model_version}" == "2":
+                    probits = model_data(tensor)[0].cpu()
+                    values, indices = probits.topk(250)
+                else:
+                    ComfyLogger().log(message=f"Model version {model_version} not supported", type="ERROR", always=True)
+                    return "", {}
 
-        # Check if per-category selection should be used
-        use_per_cat = (
-            category_config is not None
-            and metadata is not None
-            and any(
-                category_config.get(f"{cat}_topk", 0) != 0
-                or category_config.get(f"{cat}_threshold", 0.0) != 0.0
-                for cat in CATEGORY_ID_TO_NAME.values()
+            # ----------------------------------------------------------
+            # Top-K + threshold selection
+            # ----------------------------------------------------------
+            metadata = ComfyCache.get(f'tags.{tags_name}.metadata')
+
+            # Check if per-category selection should be used
+            use_per_cat = (
+                category_config is not None
+                and metadata is not None
+                and any(
+                    category_config.get(f"{cat}_topk", 0) != 0
+                    or category_config.get(f"{cat}_threshold", 0.0) != 0.0
+                    for cat in CATEGORY_ID_TO_NAME.values()
+                )
             )
-        )
 
-        if use_per_cat:
-            # Build tag list and reverse lookup from tag vocabulary
-            tags_data = ComfyCache.get(f'tags.{tags_name}.tags')
-            idx2tag: List[str] = [""] * len(tags_data) if tags_data else []
-            tag_to_idx: Dict[str, int] = {}
-            if tags_data:
-                for key, val in tags_data.items():
-                    idx = int(val)
-                    tag = key.replace("_", " ")
-                    if idx < len(idx2tag):
-                        idx2tag[idx] = tag
-                        tag_to_idx[tag] = idx
+            if use_per_cat:
+                # Build tag list and reverse lookup from tag vocabulary
+                tags_data = ComfyCache.get(f'tags.{tags_name}.tags')
+                idx2tag: List[str] = [""] * len(tags_data) if tags_data else []
+                tag_to_idx: Dict[str, int] = {}
+                if tags_data:
+                    for key, val in tags_data.items():
+                        idx = int(val)
+                        tag = key.replace("_", " ")
+                        if idx < len(idx2tag):
+                            idx2tag[idx] = tag
+                            tag_to_idx[tag] = idx
 
-            raw_results = cls._per_category_select(
+                raw_results = cls._per_category_select(
+                    values=values,
+                    indices=indices,
+                    idx2tag=idx2tag,
+                    metadata=metadata,
+                    category_config=category_config,
+                    global_mode=mode,
+                    global_topk=topk,
+                    global_threshold=threshold,
+                )
+
+                # Convert raw_results back to tensors for process_tags
+                if raw_results:
+                    sel_indices = torch.tensor(
+                        [tag_to_idx[tag] for tag, _ in raw_results if tag in tag_to_idx],
+                        dtype=torch.long,
+                    )
+                    sel_values = torch.tensor(
+                        [s for tag, s in raw_results if tag in tag_to_idx],
+                        dtype=torch.float32,
+                    )
+                else:
+                    sel_indices = torch.tensor([], dtype=torch.long)
+                    sel_values = torch.tensor([], dtype=torch.float32)
+
+                values = sel_values
+                indices = sel_indices
+            else:
+                # Global selection: apply mode-based filtering on existing top-250
+                if mode == "topk":
+                    # Already have top-250 sorted by score; apply threshold floor then cap to topk
+                    mask = values >= threshold
+                    values = values[mask]
+                    indices = indices[mask]
+                    k = min(topk, len(values))
+                    values = values[:k]
+                    indices = indices[:k]
+
+            ComfyLogger().log(message="Processing tags...", type="DEBUG", always=True)
+            tags_str, tag_scores = JtpTagManager().process_tags(
+                tags_name=tags_name,
                 values=values,
                 indices=indices,
-                idx2tag=idx2tag,
-                metadata=metadata,
-                category_config=category_config,
-                global_mode=mode,
-                global_topk=topk,
-                global_threshold=threshold,
+                threshold=threshold if not use_per_cat else -1.0,  # Skip threshold in process_tags if per-cat already applied
+                exclude_tags=exclude_tags,
+                replace_underscore=replace_underscore,
+                trailing_comma=trailing_comma,
+                implications_mode=implications_mode,
+                exclude_categories=exclude_categories,
+                prefix=prefix,
+                max_tags=max_tags,
             )
+        finally:
+            # Offload model to free GPU memory
+            model_data.to("cpu")
+            mm.soft_empty_cache()
 
-            # Convert raw_results back to tensors for process_tags
-            if raw_results:
-                sel_indices = torch.tensor(
-                    [tag_to_idx[tag] for tag, _ in raw_results if tag in tag_to_idx],
-                    dtype=torch.long,
-                )
-                sel_values = torch.tensor(
-                    [s for tag, s in raw_results if tag in tag_to_idx],
-                    dtype=torch.float32,
-                )
-            else:
-                sel_indices = torch.tensor([], dtype=torch.long)
-                sel_values = torch.tensor([], dtype=torch.float32)
-
-            values = sel_values
-            indices = sel_indices
-        else:
-            # Global selection: apply mode-based filtering on existing top-250
-            if mode == "topk":
-                # Already have top-250 sorted by score; apply threshold floor then cap to topk
-                mask = values >= threshold
-                values = values[mask]
-                indices = indices[mask]
-                k = min(topk, len(values))
-                values = values[:k]
-                indices = indices[:k]
-
-        ComfyLogger().log(message="Processing tags...", type="DEBUG", always=True)
-        tags_str, tag_scores = JtpTagManager().process_tags(
-            tags_name=tags_name,
-            values=values,
-            indices=indices,
-            threshold=threshold if not use_per_cat else -1.0,  # Skip threshold in process_tags if per-cat already applied
-            exclude_tags=exclude_tags,
-            replace_underscore=replace_underscore,
-            trailing_comma=trailing_comma,
-            implications_mode=implications_mode,
-            exclude_categories=exclude_categories,
-            prefix=prefix,
-            max_tags=max_tags,
-        )
         if not JtpImageManager().commit_cache(image=image, output=(tags_str, tag_scores), params_key=params_key):
             ComfyLogger().log(message="Image cache could not be committed", type="WARN", always=True)
             return tags_str, tag_scores

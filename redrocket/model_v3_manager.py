@@ -93,15 +93,15 @@ class JtpModelV3Manager(metaclass=Singleton):
             # Load state dict
             msg = model.load_state_dict(state_dict, strict=False)
 
-            # Move to device
-            model.to(device=device)
+            # Ensure model is on CPU for caching
+            model.to(device="cpu")
 
             ComfyCache.set(f'model_v3.{model_name}', {
                 "model": model,
                 "tags": tags,
-                "device": device
+                "device": torch.device("cpu")
             })
-            ComfyLogger().log(message=f"Model {model_name} loaded successfully", type="INFO", always=True)
+            ComfyLogger().log(message=f"Model {model_name} loaded successfully on CPU", type="INFO", always=True)
             return True, tags
 
         except Exception as e:

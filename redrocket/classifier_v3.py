@@ -180,142 +180,147 @@ class JtpInferenceV3:
         # We need gradients for CAM if we are going to run it?
         # No, JTP-3 app.py runs forward with no_grad, then enables grad only for the backward pass on intermediates.
 
-        with torch.no_grad():
-            features = model.forward_intermediates(
-                p_d,
-                patch_coord=pc_d,
-                patch_valid=pv_d,
-                indices=cam_depth,
-                output_dict=True,
-                output_fmt='NLC'
-            )
-            logits = model.forward_head(features["image_features"], patch_valid=pv_d)
-
-            probits = torch.sigmoid(logits[0].to(dtype=torch.float32))
-            probits.mul_(2.0).sub_(1.0) # Scale to -1..1
-
-            values, indices = probits.cpu().topk(250)
-
-            predictions = {
-                tags[idx.item()]: val.item()
-                for idx, val in sorted(
-                    zip(indices, values),
-                    key=lambda item: item[1].item(),
-                    reverse=True
+        try:
+            with torch.no_grad():
+                features = model.forward_intermediates(
+                    p_d,
+                    patch_coord=pc_d,
+                    patch_valid=pv_d,
+                    indices=cam_depth,
+                    output_dict=True,
+                    output_fmt='NLC'
                 )
-            }
+                logits = model.forward_head(features["image_features"], patch_valid=pv_d)
 
-        # ----------------------------------------------------------
-        # Top-K + threshold selection
-        # ----------------------------------------------------------
-        metadata = ComfyCache.get(f'tags_v3.{model_name}')
+                probits = torch.sigmoid(logits[0].to(dtype=torch.float32))
+                probits.mul_(2.0).sub_(1.0) # Scale to -1..1
 
-        # Check if per-category selection should be used
-        use_per_cat = (
-            category_config is not None
-            and metadata is not None
-            and any(
-                category_config.get(f"{cat}_topk", 0) != 0
-                or category_config.get(f"{cat}_threshold", 0.0) != 0.0
-                for cat in CATEGORY_ID_TO_NAME.values()
+                values, indices = probits.cpu().topk(250)
+
+                predictions = {
+                    tags[idx.item()]: val.item()
+                    for idx, val in sorted(
+                        zip(indices, values),
+                        key=lambda item: item[1].item(),
+                        reverse=True
+                    )
+                }
+
+            # ----------------------------------------------------------
+            # Top-K + threshold selection
+            # ----------------------------------------------------------
+            metadata = ComfyCache.get(f'tags_v3.{model_name}')
+
+            # Check if per-category selection should be used
+            use_per_cat = (
+                category_config is not None
+                and metadata is not None
+                and any(
+                    category_config.get(f"{cat}_topk", 0) != 0
+                    or category_config.get(f"{cat}_threshold", 0.0) != 0.0
+                    for cat in CATEGORY_ID_TO_NAME.values()
+                )
             )
-        )
 
-        if use_per_cat:
-            predictions = cls._per_category_select(
-                predictions=predictions,
-                metadata=metadata,
-                category_config=category_config,
-                global_mode=mode,
-                global_topk=topk,
-                global_threshold=threshold,
-            )
-            # Use a very low threshold so process_tags doesn't re-filter
-            effective_threshold = -2.0
-        else:
-            # Global selection: apply mode-based filtering on predictions
-            if mode == "topk":
-                # Filter by threshold first, then cap to topk
-                filtered = {t: s for t, s in predictions.items() if s >= threshold}
-                sorted_preds = sorted(filtered.items(), key=lambda x: x[1], reverse=True)
-                predictions = dict(sorted_preds[:topk])
-                effective_threshold = -2.0  # Already filtered
+            if use_per_cat:
+                predictions = cls._per_category_select(
+                    predictions=predictions,
+                    metadata=metadata,
+                    category_config=category_config,
+                    global_mode=mode,
+                    global_topk=topk,
+                    global_threshold=threshold,
+                )
+                # Use a very low threshold so process_tags doesn't re-filter
+                effective_threshold = -2.0
             else:
-                effective_threshold = threshold
+                # Global selection: apply mode-based filtering on predictions
+                if mode == "topk":
+                    # Filter by threshold first, then cap to topk
+                    filtered = {t: s for t, s in predictions.items() if s >= threshold}
+                    sorted_preds = sorted(filtered.items(), key=lambda x: x[1], reverse=True)
+                    predictions = dict(sorted_preds[:topk])
+                    effective_threshold = -2.0  # Already filtered
+                else:
+                    effective_threshold = threshold
 
-        # Process tags (Implications, Thresholding)
-        tag_str, final_scores, top_tag_raw = JtpTagV3Manager.process_tags(
-            predictions, model_name, effective_threshold, implications_mode, exclude_tags,
-            exclude_categories, prefix, original_tags,
-            replace_underscore=replace_underscore, trailing_comma=trailing_comma,
-            max_tags=max_tags
-        )
+            # Process tags (Implications, Thresholding)
+            tag_str, final_scores, top_tag_raw = JtpTagV3Manager.process_tags(
+                predictions, model_name, effective_threshold, implications_mode, exclude_tags,
+                exclude_categories, prefix, original_tags,
+                replace_underscore=replace_underscore, trailing_comma=trailing_comma,
+                max_tags=max_tags
+            )
 
-        cam_image = None
+            cam_image = None
 
-        # CAM Logic
-        if cam_mode != "none":
-            target_idx = -1
+            # CAM Logic
+            if cam_mode != "none":
+                target_idx = -1
 
-            if cam_mode == "auto":
-                # Use top 1 valid tag from filtered results
-                if top_tag_raw and top_tag_raw in tags:
+                if cam_mode == "auto":
+                    # Use top 1 valid tag from filtered results
+                    if top_tag_raw and top_tag_raw in tags:
+                        try:
+                            target_idx = tags.index(top_tag_raw)
+                        except ValueError:
+                            ComfyLogger().log(f"Auto CAM: '{top_tag_raw}' found in tags list but index retrieval failed.", "WARNING")
+
+                    # Fallback to raw model top 1 if filtering removed everything but auto was requested?
+                    # Or if process_tags returned nothing.
+                    if target_idx == -1 and indices.numel() > 0:
+                         # If we have no valid tags after filtering, should we show the raw top tag?
+                         # The user likely wants to see *why* it triggered or just the strongest signal.
+                         # But if they excluded it, maybe they don't want to see it.
+                         # Let's fallback to raw top 1 to avoid black square confusion,
+                         # but ideally 'top_tag_raw' covers the "best valid" case.
+                         target_idx = indices[0].item()
+
+                elif cam_mode == "specific_tag" and cam_tag:
+                    # Find tag index
+                    # Clean up input (remove trailing commas, whitespace)
+                    clean_tag = cam_tag.strip().rstrip(",")
+
                     try:
-                        target_idx = tags.index(top_tag_raw)
-                    except ValueError:
-                        ComfyLogger().log(f"Auto CAM: '{top_tag_raw}' found in tags list but index retrieval failed.", "WARNING")
-
-                # Fallback to raw model top 1 if filtering removed everything but auto was requested?
-                # Or if process_tags returned nothing.
-                if target_idx == -1 and indices.numel() > 0:
-                     # If we have no valid tags after filtering, should we show the raw top tag?
-                     # The user likely wants to see *why* it triggered or just the strongest signal.
-                     # But if they excluded it, maybe they don't want to see it.
-                     # Let's fallback to raw top 1 to avoid black square confusion,
-                     # but ideally 'top_tag_raw' covers the "best valid" case.
-                     target_idx = indices[0].item()
-
-            elif cam_mode == "specific_tag" and cam_tag:
-                # Find tag index
-                # Clean up input (remove trailing commas, whitespace)
-                clean_tag = cam_tag.strip().rstrip(",")
-
-                try:
-                    # Normalized check
-                    if clean_tag in tags:
-                        target_idx = tags.index(clean_tag)
-                    else:
-                        # Try replacing spaces with underscores
-                        cam_tag_norm = clean_tag.replace(" ", "_")
-                        if cam_tag_norm in tags:
-                            target_idx = tags.index(cam_tag_norm)
+                        # Normalized check
+                        if clean_tag in tags:
+                            target_idx = tags.index(clean_tag)
                         else:
-                            ComfyLogger().log(f"CAM Tag '{cam_tag}' (normalized: '{cam_tag_norm}') not found in model tags.", "WARNING")
-                except ValueError:
-                    ComfyLogger().log(f"CAM Tag '{cam_tag}' caused a ValueError during lookup.", "WARNING")
+                            # Try replacing spaces with underscores
+                            cam_tag_norm = clean_tag.replace(" ", "_")
+                            if cam_tag_norm in tags:
+                                target_idx = tags.index(cam_tag_norm)
+                            else:
+                                ComfyLogger().log(f"CAM Tag '{cam_tag}' (normalized: '{cam_tag_norm}') not found in model tags.", "WARNING")
+                    except ValueError:
+                        ComfyLogger().log(f"CAM Tag '{cam_tag}' caused a ValueError during lookup.", "WARNING")
 
-            if target_idx >= 0:
-                # Need original PIL image for composite
-                # If 'image' is PIL, use it. If tensor/numpy, we need to convert or use 'result' input?
-                # JtpImageV3Manager.load processes image.
-                # We can use the original 'image' if it's PIL.
-                display_img = None
-                if isinstance(image, Image.Image):
-                    display_img = image.convert("RGB")
-                elif isinstance(image, np.ndarray):
-                    display_img = Image.fromarray(image).convert("RGB")
-                elif isinstance(image, Path) and image.exists():
-                    display_img = Image.open(str(image)).convert("RGB")
+                if target_idx >= 0:
+                    # Need original PIL image for composite
+                    # If 'image' is PIL, use it. If tensor/numpy, we need to convert or use 'result' input?
+                    # JtpImageV3Manager.load processes image.
+                    # We can use the original 'image' if it's PIL.
+                    display_img = None
+                    if isinstance(image, Image.Image):
+                        display_img = image.convert("RGB")
+                    elif isinstance(image, np.ndarray):
+                        display_img = Image.fromarray(image).convert("RGB")
+                    elif isinstance(image, Path) and image.exists():
+                        display_img = Image.open(str(image)).convert("RGB")
 
-                if display_img:
-                    try:
-                        cam_image = cls.run_cam(
-                            model, display_img, features, target_idx, cam_depth,
-                            pc_d, pv_d
-                        )
-                    except Exception as e:
-                        import traceback
-                        ComfyLogger().log(f"CAM generation failed: {e}\n{traceback.format_exc()}", "ERROR", True)
+                    if display_img:
+                        try:
+                            cam_image = cls.run_cam(
+                                model, display_img, features, target_idx, cam_depth,
+                                pc_d, pv_d
+                            )
+                        except Exception as e:
+                            import traceback
+                            ComfyLogger().log(f"CAM generation failed: {e}\n{traceback.format_exc()}", "ERROR", True)
+        finally:
+            # Offload model to free GPU memory
+            model.to("cpu")
+            mm.soft_empty_cache()
 
         # Cache result
         image_key = None
@@ -326,11 +331,6 @@ class JtpInferenceV3:
              image_key = hashlib.sha256(img_arr.tobytes()).hexdigest()
 
         JtpImageV3Manager.commit_cache(image_key, (tag_str, final_scores, cam_image), params_key)
-
-        # Offload model to free GPU memory
-        offload_device = mm.unet_offload_device()
-        model.to(offload_device)
-        mm.soft_empty_cache()
 
         return tag_str, final_scores, cam_image
 

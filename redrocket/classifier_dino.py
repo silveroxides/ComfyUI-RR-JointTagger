@@ -203,7 +203,7 @@ class DINOv3Inference:
         if not model_data or not isinstance(model_data, dict):
             ComfyLogger().log("DINOv3: model cache corrupted", "ERROR", True)
             return "", {}
-        
+
         model = model_data["model"]
         model_dtype = model_data.get("dtype", torch.bfloat16)
 
@@ -229,82 +229,82 @@ class DINOv3Inference:
         # ----------------------------------------------------------
         # 4. Forward pass
         # ----------------------------------------------------------
-        with torch.no_grad(), torch.autocast(
-            device_type=device.type, dtype=model_dtype,
-        ):
-            logits = model(pixel_values)[0]  # [num_tags]
+        try:
+            with torch.no_grad(), torch.autocast(
+                device_type=device.type, dtype=model_dtype,
+            ):
+                logits = model(pixel_values)[0]  # [num_tags]
 
-        scores = torch.sigmoid(logits.float())
+            scores = torch.sigmoid(logits.float())
 
-        # ----------------------------------------------------------
-        # 5. Top-K + threshold selection
-        # ----------------------------------------------------------
-        tag2category = DINOv3TagManager.get_tag2category(model_name)
+            # ----------------------------------------------------------
+            # 5. Top-K + threshold selection
+            # ----------------------------------------------------------
+            tag2category = DINOv3TagManager.get_tag2category(model_name)
 
-        # Use per-category selection when config is provided and categories
-        # are available; otherwise fall back to the global logic.
-        use_per_cat = (
-            category_config is not None
-            and tag2category is not None
-            and any(
-                category_config.get(f"{cat}_topk", 0) != 0
-                or category_config.get(f"{cat}_threshold", 0.0) != 0.0
-                for cat in CATEGORY_ID_TO_NAME.values()
+            # Use per-category selection when config is provided and categories
+            # are available; otherwise fall back to the global logic.
+            use_per_cat = (
+                category_config is not None
+                and tag2category is not None
+                and any(
+                    category_config.get(f"{cat}_topk", 0) != 0
+                    or category_config.get(f"{cat}_threshold", 0.0) != 0.0
+                    for cat in CATEGORY_ID_TO_NAME.values()
+                )
             )
-        )
 
-        if use_per_cat:
-            raw_results = cls._per_category_select(
-                scores=scores,
-                idx2tag=idx2tag,
-                tag2category=tag2category,
-                category_config=category_config,
-                global_mode=mode,
-                global_topk=topk,
-                global_threshold=threshold,
+            if use_per_cat:
+                raw_results = cls._per_category_select(
+                    scores=scores,
+                    idx2tag=idx2tag,
+                    tag2category=tag2category,
+                    category_config=category_config,
+                    global_mode=mode,
+                    global_topk=topk,
+                    global_threshold=threshold,
+                )
+            else:
+                # Global selection (original logic)
+                mask = scores >= threshold
+                valid_indices = mask.nonzero(as_tuple=True)[0]
+                valid_values = scores[valid_indices]
+
+                order = valid_values.argsort(descending=True)
+                valid_indices = valid_indices[order]
+                valid_values = valid_values[order]
+
+                if mode == "topk":
+                    k = min(topk, len(valid_indices))
+                    valid_indices = valid_indices[:k]
+                    valid_values = valid_values[:k]
+
+                raw_results: List[Tuple[str, float]] = [
+                    (idx2tag[i], float(v))
+                    for i, v in zip(valid_indices.tolist(), valid_values.tolist())
+                ]
+
+            # ----------------------------------------------------------
+            # 6. Process and format tags
+            # ----------------------------------------------------------
+            tag_string, scores_dict = DINOv3TagManager.process_tags(
+                results=raw_results,
+                model_name=model_name,
+                implications_mode=implications_mode,
+                threshold=threshold,
+                max_tags=max_tags,
+                exclude_tags=exclude_tags,
+                exclude_categories=exclude_categories,
+                trailing_comma=trailing_comma,
+                prefix=prefix,
+                use_aliases=use_aliases,
             )
-        else:
-            # Global selection (original logic)
-            mask = scores >= threshold
-            valid_indices = mask.nonzero(as_tuple=True)[0]
-            valid_values = scores[valid_indices]
-
-            order = valid_values.argsort(descending=True)
-            valid_indices = valid_indices[order]
-            valid_values = valid_values[order]
-
-            if mode == "topk":
-                k = min(topk, len(valid_indices))
-                valid_indices = valid_indices[:k]
-                valid_values = valid_values[:k]
-
-            raw_results: List[Tuple[str, float]] = [
-                (idx2tag[i], float(v))
-                for i, v in zip(valid_indices.tolist(), valid_values.tolist())
-            ]
-
-        # ----------------------------------------------------------
-        # 6. Process and format tags
-        # ----------------------------------------------------------
-        tag_string, scores_dict = DINOv3TagManager.process_tags(
-            results=raw_results,
-            model_name=model_name,
-            implications_mode=implications_mode,
-            threshold=threshold,
-            max_tags=max_tags,
-            exclude_tags=exclude_tags,
-            exclude_categories=exclude_categories,
-            trailing_comma=trailing_comma,
-            prefix=prefix,
-            use_aliases=use_aliases,
-        )
-
-        # ----------------------------------------------------------
-        # 7. Offload model to free GPU memory
-        # ----------------------------------------------------------
-        offload_device = mm.unet_offload_device()
-        model.to(offload_device)
-        mm.soft_empty_cache()
+        finally:
+            # ----------------------------------------------------------
+            # 7. Offload model to free GPU memory
+            # ----------------------------------------------------------
+            model.to("cpu")
+            mm.soft_empty_cache()
 
         # ----------------------------------------------------------
         # 8. Cache result
