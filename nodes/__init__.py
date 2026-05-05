@@ -14,6 +14,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     **NAMES_V1,
     "Jtp3HydraTagger|redrocket": "JTP-3 Hydra Tagger 🐺",
     "JTP3CategoryConfig|redrocket": "JTP-3 Category Config 🐺",
-    "DINOv3Tagger|redrocket": "DINOv3 Tagger 🐺",
-    "DINOv3CategoryConfig|redrocket": "DINOv3 Category Config 🐺",
+    "DINOv3Tagger|redrocket": "DINOv3 Taggerine by Lodestone 🐺",
+    "DINOv3CategoryConfig|redrocket": "DINOv3 Taggerine Category Config 🐺",
 }
