@@ -8,4 +8,4 @@ numpy
 tqdm
 msgspec
 einops
-unifiedefficientloader
+unifiedefficientloader>=0.5.0
