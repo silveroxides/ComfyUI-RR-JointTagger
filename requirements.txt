@@ -9,3 +9,5 @@ tqdm
 msgspec
 einops
 unifiedefficientloader>=0.5.0
+transformers
+
