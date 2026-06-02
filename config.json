@@ -60,5 +60,8 @@
 			"data_url": "{HF_ENDPOINT}/RedRocket/JTP-3/resolve/main/data",
 			"data_tag_file": "jtp-3-hydra-tags.csv"
 		}
+	},
+	"pruner": {
+		"tag_list_url": "{HF_ENDPOINT}/silveroxides/Furrence-2-Large/resolve/main/tags-2024-05-05.csv"
 	}
 }
